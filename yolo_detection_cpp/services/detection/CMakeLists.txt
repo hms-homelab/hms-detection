@@ -24,6 +24,9 @@ add_executable(hms_detection
     src/buffer_service.cpp
     src/detection_engine.cpp
     src/detection_worker.cpp
+    src/event_recorder.cpp
+    src/snapshot_writer.cpp
+    src/event_manager.cpp
     src/controllers/health_controller.cpp
     src/controllers/detection_controller.cpp
 )

@@ -1,5 +1,6 @@
 #include "controllers/health_controller.h"
 #include "buffer_service.h"
+#include "mqtt_client.h"
 #include "time_utils.h"
 
 #include <drogon/HttpResponse.h>
@@ -10,6 +11,10 @@ namespace hms {
 
 void HealthController::setBufferService(std::shared_ptr<BufferService> svc) {
     buffer_service_ = std::move(svc);
+}
+
+void HealthController::setMqttClient(std::shared_ptr<yolo::MqttClient> mqtt) {
+    mqtt_client_ = std::move(mqtt);
 }
 
 void HealthController::getHealth(
@@ -72,16 +77,34 @@ void HealthController::getHealth(
         detection_json[cam_id] = cam_det;
     }
 
+    // MQTT status
+    json mqtt_json = json::object();
+    if (mqtt_client_) {
+        mqtt_json["connected"] = mqtt_client_->isConnected();
+    } else {
+        mqtt_json["connected"] = false;
+        mqtt_json["note"] = "MQTT client not configured";
+    }
+
+    // Overall status: degraded if cameras unhealthy OR mqtt disconnected
+    std::string status = "healthy";
+    if (!healthy) {
+        status = "degraded";
+    } else if (mqtt_client_ && !mqtt_client_->isConnected()) {
+        status = "degraded";
+    }
+
     json result = {
         {"service", "hms-detection"},
-        {"status", healthy ? "healthy" : "degraded"},
+        {"status", status},
         {"timestamp", yolo::time_utils::now_iso8601()},
         {"cameras", cameras_json},
         {"detection", detection_json},
+        {"mqtt", mqtt_json},
     };
 
     auto resp = drogon::HttpResponse::newHttpResponse();
-    resp->setStatusCode(healthy ? drogon::k200OK : drogon::k503ServiceUnavailable);
+    resp->setStatusCode(status == "healthy" ? drogon::k200OK : drogon::k503ServiceUnavailable);
     resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     resp->setBody(result.dump());
     callback(resp);

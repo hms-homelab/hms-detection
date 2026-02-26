@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev libkrb5-dev \
     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
     libonnxruntime-dev \
+    libpaho-mqttpp-dev libpaho-mqtt-dev \
     libcatch2-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 libkrb5-3 \
     libavformat61 libavcodec61 libavutil59 libswscale8 \
     libonnxruntime1.21 \
+    libpaho-mqttpp3-1 libpaho-mqtt1.3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

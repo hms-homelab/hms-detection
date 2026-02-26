@@ -42,7 +42,10 @@ public:
 
     // --- Detection ---
 
-    /// Start detection workers for all cameras (creates engine if model exists)
+    /// Load the ONNX model without starting continuous workers
+    void loadDetectionModel();
+
+    /// Start continuous detection workers for all cameras
     void startDetection();
 
     /// Stop all detection workers

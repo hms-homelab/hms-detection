@@ -13,6 +13,9 @@ extern "C" {
 
 #include "config_manager.h"
 #include "buffer_service.h"
+#include "mqtt_client.h"
+#include "db_pool.h"
+#include "event_manager.h"
 #include "controllers/health_controller.h"
 #include "controllers/detection_controller.h"
 
@@ -22,10 +25,15 @@ namespace {
 
 std::atomic<bool> g_shutdown{false};
 std::shared_ptr<hms::BufferService> g_buffer_service;
+std::shared_ptr<hms::EventManager> g_event_manager;
+std::shared_ptr<yolo::MqttClient> g_mqtt;
 
 void signal_handler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
     g_shutdown = true;
+    if (g_event_manager) {
+        g_event_manager->stop();
+    }
     if (g_buffer_service) {
         g_buffer_service->stopDetection();
         g_buffer_service->stopAll();
@@ -93,7 +101,7 @@ int main(int argc, char* argv[]) {
         auto config = yolo::ConfigManager::load(config_path);
 
         setup_logging(config.logging);
-        spdlog::info("Starting hms-detection service v2.0.0");
+        spdlog::info("Starting hms-detection service v3.0.0");
         spdlog::info("Config: {}", config_path);
 
         // Initialize FFmpeg
@@ -114,8 +122,43 @@ int main(int argc, char* argv[]) {
         // Start capturing
         g_buffer_service->startAll();
 
-        // Start detection (if model file exists)
-        g_buffer_service->startDetection();
+        // Load detection model (but don't start continuous workers —
+        // detection only runs on-demand during motion events)
+        g_buffer_service->loadDetectionModel();
+
+        // --- MQTT (initialized BEFORE app.run(), independent subsystem) ---
+        g_mqtt = std::make_shared<yolo::MqttClient>(config.mqtt);
+        try {
+            if (g_mqtt->connect()) {
+                // Publish online status (retained)
+                g_mqtt->publish(config.mqtt.topic_prefix + "/status", "online", 1, true);
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("MQTT unavailable: {} (HTTP will continue serving)", e.what());
+        }
+
+        // Inject MQTT into health controller for status reporting
+        hms::HealthController::setMqttClient(g_mqtt);
+
+        // --- Database pool (for event logging) ---
+        std::shared_ptr<yolo::DbPool> db;
+        try {
+            yolo::DbPool::Config db_cfg;
+            db_cfg.host = config.database.host;
+            db_cfg.port = config.database.port;
+            db_cfg.user = config.database.user;
+            db_cfg.password = config.database.password;
+            db_cfg.database = config.database.database;
+            db_cfg.pool_size = config.database.pool_size;
+            db = std::make_shared<yolo::DbPool>(db_cfg);
+        } catch (const std::exception& e) {
+            spdlog::warn("Database unavailable: {} (event logging disabled)", e.what());
+        }
+
+        // --- EventManager (MQTT trigger → detect → record → publish) ---
+        g_event_manager = std::make_shared<hms::EventManager>(
+            g_buffer_service, g_mqtt, db, config);
+        g_event_manager->start();
 
         // Configure Drogon
         auto& app = drogon::app();
@@ -143,8 +186,18 @@ int main(int argc, char* argv[]) {
 
         // Cleanup
         spdlog::info("Shutting down...");
+        if (g_event_manager) g_event_manager->stop();
         g_buffer_service->stopDetection();
         g_buffer_service->stopAll();
+
+        // MQTT offline + disconnect
+        if (g_mqtt) {
+            g_mqtt->publish(config.mqtt.topic_prefix + "/status", "offline", 1, true);
+            g_mqtt->disconnect();
+        }
+
+        g_event_manager.reset();
+        g_mqtt.reset();
         g_buffer_service.reset();
         avformat_network_deinit();
         spdlog::info("Shutdown complete");

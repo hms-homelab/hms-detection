@@ -3,6 +3,8 @@
 #include <drogon/HttpController.h>
 #include <memory>
 
+namespace yolo { class MqttClient; }
+
 namespace hms {
 
 class BufferService;
@@ -17,9 +19,11 @@ public:
                    std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 
     static void setBufferService(std::shared_ptr<BufferService> svc);
+    static void setMqttClient(std::shared_ptr<yolo::MqttClient> mqtt);
 
 private:
     static inline std::shared_ptr<BufferService> buffer_service_;
+    static inline std::shared_ptr<yolo::MqttClient> mqtt_client_;
 };
 
 }  // namespace hms

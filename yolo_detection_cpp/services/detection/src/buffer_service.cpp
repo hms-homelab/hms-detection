@@ -19,8 +19,8 @@ BufferService::BufferService(const yolo::AppConfig& config)
             config.buffer.preroll_seconds * config.buffer.fps);
         if (buffer_capacity == 0) buffer_capacity = 75;  // fallback
 
-        // Pool size: buffer capacity + 15 headroom for in-flight frames
-        size_t pool_size = buffer_capacity + 15;
+        // Pool: buffer + headroom for RTSP decode, event reads, detection
+        size_t pool_size = buffer_capacity + 30;
 
         auto pool = std::make_shared<FramePool>(pool_size);
         auto buffer = std::make_shared<CameraBuffer>(buffer_capacity);
@@ -63,7 +63,7 @@ void BufferService::stopAll() {
 
 // --- Detection ---
 
-void BufferService::startDetection() {
+void BufferService::loadDetectionModel() {
     auto model_path = config_.detection.model_path;
 
     if (!std::filesystem::exists(model_path)) {
@@ -71,13 +71,19 @@ void BufferService::startDetection() {
         return;
     }
 
-    // Create shared engine (thread-safe for concurrent inference)
     detection_engine_ = std::make_shared<DetectionEngine>(model_path);
     if (!detection_engine_->isLoaded()) {
         spdlog::error("Failed to load detection model, detection disabled");
         detection_engine_.reset();
         return;
     }
+
+    spdlog::info("Detection model loaded: '{}'", model_path);
+}
+
+void BufferService::startDetection() {
+    if (!detection_engine_) loadDetectionModel();
+    if (!detection_engine_) return;
 
     // Create per-camera workers
     for (const auto& [id, state] : cameras_) {
@@ -91,8 +97,7 @@ void BufferService::startDetection() {
         detection_workers_[id] = std::move(worker);
     }
 
-    spdlog::info("Detection started for {} camera(s) with model '{}'",
-                 detection_workers_.size(), model_path);
+    spdlog::info("Detection started for {} camera(s)", detection_workers_.size());
 }
 
 void BufferService::stopDetection() {
