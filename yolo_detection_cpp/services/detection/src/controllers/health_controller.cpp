@@ -6,12 +6,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-}
-
 namespace hms {
 
 void HealthController::setBufferService(std::shared_ptr<BufferService> svc) {
@@ -47,11 +41,43 @@ void HealthController::getHealth(
         };
     }
 
+    // Detection stats
+    json detection_json = json::object();
+    auto engine = buffer_service_->getDetectionEngine();
+    detection_json["model_loaded"] = (engine && engine->isLoaded());
+    if (engine && engine->isLoaded()) {
+        detection_json["input_size"] = std::to_string(engine->inputWidth()) + "x"
+                                       + std::to_string(engine->inputHeight());
+    }
+
+    auto det_stats = buffer_service_->getDetectionStats();
+    for (const auto& [cam_id, ds] : det_stats) {
+        json cam_det = {
+            {"frames_processed", ds.frames_processed},
+            {"detections_found", ds.detections_found},
+            {"avg_inference_ms", std::round(ds.avg_inference_ms * 10) / 10},
+            {"is_running", ds.is_running},
+        };
+
+        // Include last detection class names
+        auto result = buffer_service_->getDetectionResult(cam_id);
+        if (result && !result->detections.empty()) {
+            json last_classes = json::array();
+            for (const auto& d : result->detections) {
+                last_classes.push_back(d.class_name);
+            }
+            cam_det["last_detections"] = last_classes;
+        }
+
+        detection_json[cam_id] = cam_det;
+    }
+
     json result = {
         {"service", "hms-detection"},
         {"status", healthy ? "healthy" : "degraded"},
         {"timestamp", yolo::time_utils::now_iso8601()},
         {"cameras", cameras_json},
+        {"detection", detection_json},
     };
 
     auto resp = drogon::HttpResponse::newHttpResponse();
@@ -59,96 +85,6 @@ void HealthController::getHealth(
     resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     resp->setBody(result.dump());
     callback(resp);
-}
-
-void HealthController::getSnapshot(
-    const drogon::HttpRequestPtr& /*req*/,
-    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
-    const std::string& camera_id)
-{
-    auto frame = buffer_service_->getLatestFrame(camera_id);
-    if (!frame) {
-        auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k404NotFound);
-        resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        resp->setBody(R"({"error":"No frame available for camera: )" + camera_id + R"("})");
-        callback(resp);
-        return;
-    }
-
-    // Encode BGR24 → JPEG using FFmpeg MJPEG encoder
-    const AVCodec* mjpeg_codec = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
-    if (!mjpeg_codec) {
-        auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k500InternalServerError);
-        resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        resp->setBody(R"({"error":"MJPEG encoder not available"})");
-        callback(resp);
-        return;
-    }
-
-    AVCodecContext* enc_ctx = avcodec_alloc_context3(mjpeg_codec);
-    enc_ctx->width = frame->width;
-    enc_ctx->height = frame->height;
-    enc_ctx->pix_fmt = AV_PIX_FMT_YUVJ420P;
-    enc_ctx->time_base = {1, 25};
-    enc_ctx->flags |= AV_CODEC_FLAG_QSCALE;
-    // Quality: lower = better. 2-5 is good range. ~85% quality ≈ qmin=2, qmax=5
-    enc_ctx->qmin = 2;
-    enc_ctx->qmax = 5;
-
-    if (avcodec_open2(enc_ctx, mjpeg_codec, nullptr) < 0) {
-        avcodec_free_context(&enc_ctx);
-        auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k500InternalServerError);
-        resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        resp->setBody(R"({"error":"Failed to open MJPEG encoder"})");
-        callback(resp);
-        return;
-    }
-
-    // Convert BGR24 → YUV420P for MJPEG
-    SwsContext* sws = sws_getContext(
-        frame->width, frame->height, AV_PIX_FMT_BGR24,
-        frame->width, frame->height, AV_PIX_FMT_YUVJ420P,
-        SWS_BILINEAR, nullptr, nullptr, nullptr);
-
-    AVFrame* yuv_frame = av_frame_alloc();
-    yuv_frame->format = AV_PIX_FMT_YUVJ420P;
-    yuv_frame->width = frame->width;
-    yuv_frame->height = frame->height;
-    av_frame_get_buffer(yuv_frame, 0);
-
-    const uint8_t* src_data[1] = {frame->pixels.data()};
-    int src_linesize[1] = {frame->stride};
-    sws_scale(sws, src_data, src_linesize, 0, frame->height,
-              yuv_frame->data, yuv_frame->linesize);
-
-    // Encode
-    AVPacket* pkt = av_packet_alloc();
-    avcodec_send_frame(enc_ctx, yuv_frame);
-    int ret = avcodec_receive_packet(enc_ctx, pkt);
-
-    if (ret == 0) {
-        auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k200OK);
-        resp->setContentTypeCode(drogon::CT_NONE);
-        resp->addHeader("Content-Type", "image/jpeg");
-        resp->setBody(std::string(reinterpret_cast<const char*>(pkt->data), pkt->size));
-        callback(resp);
-    } else {
-        auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k500InternalServerError);
-        resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
-        resp->setBody(R"({"error":"JPEG encoding failed"})");
-        callback(resp);
-    }
-
-    // Cleanup
-    av_packet_free(&pkt);
-    av_frame_free(&yuv_frame);
-    sws_freeContext(sws);
-    avcodec_free_context(&enc_ctx);
 }
 
 }  // namespace hms

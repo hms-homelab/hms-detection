@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhiredis-dev default-libmysqlclient-dev \
     libssl-dev libkrb5-dev \
     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+    libonnxruntime-dev \
     libcatch2-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -39,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libuuid1 libbrotli1 libsqlite3-0 libhiredis1.1.0 libmariadb3 \
     libssl3 libkrb5-3 \
     libavformat61 libavcodec61 libavutil59 libswscale8 \
+    libonnxruntime1.21 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,7 +49,7 @@ COPY --from=build \
     /usr/local/bin/hms_detection
 
 RUN chmod +x /usr/local/bin/hms_detection \
-    && mkdir -p /app/config /app/logs
+    && mkdir -p /app/config /app/logs /app/models
 
 EXPOSE 8000
 

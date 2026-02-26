@@ -2,9 +2,13 @@
 
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
+
 namespace hms {
 
-BufferService::BufferService(const yolo::AppConfig& config) {
+BufferService::BufferService(const yolo::AppConfig& config)
+    : config_(config)
+{
     for (const auto& [id, cam_cfg] : config.cameras) {
         if (!cam_cfg.enabled) {
             spdlog::info("[{}] Camera disabled, skipping", id);
@@ -39,6 +43,7 @@ BufferService::BufferService(const yolo::AppConfig& config) {
 }
 
 BufferService::~BufferService() {
+    stopDetection();
     stopAll();
 }
 
@@ -55,6 +60,70 @@ void BufferService::stopAll() {
         state.capture->stop();
     }
 }
+
+// --- Detection ---
+
+void BufferService::startDetection() {
+    auto model_path = config_.detection.model_path;
+
+    if (!std::filesystem::exists(model_path)) {
+        spdlog::warn("Detection model not found at '{}', detection disabled", model_path);
+        return;
+    }
+
+    // Create shared engine (thread-safe for concurrent inference)
+    detection_engine_ = std::make_shared<DetectionEngine>(model_path);
+    if (!detection_engine_->isLoaded()) {
+        spdlog::error("Failed to load detection model, detection disabled");
+        detection_engine_.reset();
+        return;
+    }
+
+    // Create per-camera workers
+    for (const auto& [id, state] : cameras_) {
+        auto cam_it = config_.cameras.find(id);
+        if (cam_it == config_.cameras.end()) continue;
+
+        auto worker = std::make_unique<DetectionWorker>(
+            id, state.buffer, detection_engine_,
+            cam_it->second, config_.detection);
+        worker->start();
+        detection_workers_[id] = std::move(worker);
+    }
+
+    spdlog::info("Detection started for {} camera(s) with model '{}'",
+                 detection_workers_.size(), model_path);
+}
+
+void BufferService::stopDetection() {
+    if (detection_workers_.empty()) return;
+    spdlog::info("Stopping detection workers");
+    for (auto& [id, worker] : detection_workers_) {
+        worker->stop();
+    }
+    detection_workers_.clear();
+    detection_engine_.reset();
+}
+
+std::shared_ptr<DetectionEngine> BufferService::getDetectionEngine() const {
+    return detection_engine_;
+}
+
+std::optional<DetectionResult> BufferService::getDetectionResult(const std::string& camera_id) const {
+    auto it = detection_workers_.find(camera_id);
+    if (it == detection_workers_.end()) return std::nullopt;
+    return it->second->getLatestResult();
+}
+
+std::unordered_map<std::string, DetectionWorker::Stats> BufferService::getDetectionStats() const {
+    std::unordered_map<std::string, DetectionWorker::Stats> result;
+    for (const auto& [id, worker] : detection_workers_) {
+        result[id] = worker->stats();
+    }
+    return result;
+}
+
+// --- Frame access ---
 
 std::shared_ptr<FrameData> BufferService::getLatestFrame(const std::string& camera_id) const {
     auto it = cameras_.find(camera_id);

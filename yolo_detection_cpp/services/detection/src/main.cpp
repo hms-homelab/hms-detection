@@ -14,6 +14,7 @@ extern "C" {
 #include "config_manager.h"
 #include "buffer_service.h"
 #include "controllers/health_controller.h"
+#include "controllers/detection_controller.h"
 
 namespace fs = std::filesystem;
 
@@ -25,7 +26,10 @@ std::shared_ptr<hms::BufferService> g_buffer_service;
 void signal_handler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
     g_shutdown = true;
-    if (g_buffer_service) g_buffer_service->stopAll();
+    if (g_buffer_service) {
+        g_buffer_service->stopDetection();
+        g_buffer_service->stopAll();
+    }
     drogon::app().quit();
 }
 
@@ -89,7 +93,7 @@ int main(int argc, char* argv[]) {
         auto config = yolo::ConfigManager::load(config_path);
 
         setup_logging(config.logging);
-        spdlog::info("Starting hms-detection service v1.0.0");
+        spdlog::info("Starting hms-detection service v2.0.0");
         spdlog::info("Config: {}", config_path);
 
         // Initialize FFmpeg
@@ -101,6 +105,7 @@ int main(int argc, char* argv[]) {
 
         // Wire controller dependencies
         hms::HealthController::setBufferService(g_buffer_service);
+        hms::DetectionController::setBufferService(g_buffer_service);
 
         // Signal handlers
         std::signal(SIGINT, signal_handler);
@@ -108,6 +113,9 @@ int main(int argc, char* argv[]) {
 
         // Start capturing
         g_buffer_service->startAll();
+
+        // Start detection (if model file exists)
+        g_buffer_service->startDetection();
 
         // Configure Drogon
         auto& app = drogon::app();
@@ -135,6 +143,7 @@ int main(int argc, char* argv[]) {
 
         // Cleanup
         spdlog::info("Shutting down...");
+        g_buffer_service->stopDetection();
         g_buffer_service->stopAll();
         g_buffer_service.reset();
         avformat_network_deinit();

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "camera_buffer.h"
+#include "detection_engine.h"
+#include "detection_worker.h"
 #include "frame_data.h"
 #include "rtsp_capture.h"
 #include "config_manager.h"
@@ -11,7 +13,7 @@
 
 namespace hms {
 
-/// Orchestrates RTSP capture and ring buffers for all cameras.
+/// Orchestrates RTSP capture, ring buffers, and detection workers for all cameras.
 class BufferService {
 public:
     struct CameraStats {
@@ -38,6 +40,25 @@ public:
     void startAll();
     void stopAll();
 
+    // --- Detection ---
+
+    /// Start detection workers for all cameras (creates engine if model exists)
+    void startDetection();
+
+    /// Stop all detection workers
+    void stopDetection();
+
+    /// Get the shared detection engine (may be null if model not loaded)
+    std::shared_ptr<DetectionEngine> getDetectionEngine() const;
+
+    /// Get latest detection result for a camera
+    std::optional<DetectionResult> getDetectionResult(const std::string& camera_id) const;
+
+    /// Get detection stats for all cameras
+    std::unordered_map<std::string, DetectionWorker::Stats> getDetectionStats() const;
+
+    // --- Frame access ---
+
     /// Get the most recent frame for a camera, or nullptr.
     std::shared_ptr<FrameData> getLatestFrame(const std::string& camera_id) const;
 
@@ -61,7 +82,12 @@ private:
         std::unique_ptr<RtspCapture> capture;
     };
 
+    yolo::AppConfig config_;
     std::unordered_map<std::string, CameraState> cameras_;
+
+    // Detection
+    std::shared_ptr<DetectionEngine> detection_engine_;
+    std::unordered_map<std::string, std::unique_ptr<DetectionWorker>> detection_workers_;
 };
 
 }  // namespace hms
