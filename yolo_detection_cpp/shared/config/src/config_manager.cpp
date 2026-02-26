@@ -132,6 +132,25 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
         }
     }
 
+    // Parse llava vision context settings
+    if (auto llava = root["llava"]) {
+        config.llava.enabled = llava["enabled"].as<bool>(false);
+        config.llava.endpoint = llava["endpoint"].as<std::string>("http://localhost:8098");
+        config.llava.model = llava["model"].as<std::string>("llava:7b");
+        config.llava.max_words = llava["max_words"].as<int>(15);
+        config.llava.timeout_seconds = llava["timeout_seconds"].as<int>(60);
+
+        if (auto prompts = llava["prompts"]) {
+            for (auto it = prompts.begin(); it != prompts.end(); ++it) {
+                config.llava.prompts[it->first.as<std::string>()] =
+                    it->second.as<std::string>();
+            }
+        }
+
+        config.llava.default_prompt = llava["default_prompt"].as<std::string>(
+            config.llava.default_prompt);
+    }
+
     // Parse logging settings
     if (auto log = root["logging"]) {
         config.logging.level = log["level"].as<std::string>("info");

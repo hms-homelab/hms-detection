@@ -72,13 +72,14 @@ void EventLogger::log_detections(DbPool& db,
         for (const auto& det : detections) {
             txn.exec(R"(
                 INSERT INTO detections
-                    (event_id, class_name, confidence, x1, y1, x2, y2)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    (event_id, class_name, confidence,
+                     bbox_x1, bbox_y1, bbox_x2, bbox_y2, detected_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
             )", pqxx::params{
                 event_id, det.class_name,
                 static_cast<double>(det.confidence),
-                static_cast<double>(det.x1), static_cast<double>(det.y1),
-                static_cast<double>(det.x2), static_cast<double>(det.y2)
+                static_cast<int>(det.x1), static_cast<int>(det.y1),
+                static_cast<int>(det.x2), static_cast<int>(det.y2)
             });
         }
 
@@ -88,6 +89,46 @@ void EventLogger::log_detections(DbPool& db,
 
     } catch (const std::exception& e) {
         spdlog::error("EventLogger: failed to log detections: {}", e.what());
+    }
+}
+
+void EventLogger::log_ai_context(DbPool& db,
+                                  const std::string& event_id,
+                                  const std::string& camera_id,
+                                  const AiVisionRecord& record) {
+    try {
+        auto conn = db.acquire();
+        pqxx::work txn(*conn);
+
+        // Format detected_classes as PostgreSQL text array literal: {person,car}
+        std::string pg_array = "{";
+        for (size_t i = 0; i < record.detected_classes.size(); ++i) {
+            if (i > 0) pg_array += ",";
+            pg_array += record.detected_classes[i];
+        }
+        pg_array += "}";
+
+        txn.exec(R"(
+            INSERT INTO ai_vision_context
+                (event_id, camera_id, context_text, source_model, prompt_used,
+                 detected_classes, response_time_seconds, is_valid, analyzed_at)
+            VALUES ($1, $2, $3, $4, $5, $6::text[], $7, $8, CURRENT_TIMESTAMP)
+        )", pqxx::params{
+            event_id, camera_id,
+            record.context_text,
+            record.source_model,
+            record.prompt_used,
+            pg_array,
+            record.response_time_seconds,
+            record.is_valid
+        });
+
+        txn.commit();
+        spdlog::debug("EventLogger: logged AI context for event {} (valid={})",
+                      event_id, record.is_valid);
+
+    } catch (const std::exception& e) {
+        spdlog::error("EventLogger: failed to log AI context: {}", e.what());
     }
 }
 

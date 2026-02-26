@@ -3,6 +3,7 @@
 #include "buffer_service.h"
 #include "event_recorder.h"
 #include "snapshot_writer.h"
+#include "vision_client.h"
 #include "mqtt_client.h"
 #include "db_pool.h"
 #include "config_manager.h"

@@ -1,5 +1,6 @@
 #include "event_manager.h"
 #include "event_logger.h"
+#include "vision_client.h"
 #include "time_utils.h"
 
 #include <spdlog/spdlog.h>
@@ -429,7 +430,51 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                                           static_cast<int>(all_detections.size()));
     }
 
-    // 16. Cleanup: remove from active events
+    // 16. LLaVA vision context (optional, runs after result already published)
+    if (config_.llava.enabled && !snapshot_path.empty() && !best_detections.empty()) {
+        float best_conf = best_detections.front().confidence;
+        auto cam_conf_it = config_.cameras.find(camera_id);
+        double conf_gate = (cam_conf_it != config_.cameras.end())
+            ? cam_conf_it->second.immediate_notification_confidence : 0.70;
+
+        if (best_conf >= conf_gate) {
+            std::string primary_class = VisionClient::selectPrimaryClass(unique_classes);
+
+            VisionClient vision(config_.llava);
+            auto vr = vision.analyze(snapshot_path, camera_id, primary_class);
+
+            if (vr.is_valid && mqtt_) {
+                json context_msg = {
+                    {"camera_id", camera_id},
+                    {"timestamp", yolo::time_utils::now_iso8601()},
+                    {"context", vr.context},
+                    {"recording_url", recorder.fileName().empty() ? json(nullptr)
+                        : json("/events/" + recorder.fileName())},
+                    {"recording_filename", recorder.fileName()},
+                    {"snapshot_url", snapshot_filename.empty() ? json(nullptr)
+                        : json("/snapshots/" + snapshot_filename)},
+                    {"source", "llava"}
+                };
+                mqtt_->publish(prefix + "/" + camera_id + "/context",
+                               context_msg.dump());
+                spdlog::info("EventManager: published LLaVA context for {}: {}",
+                             camera_id, vr.context);
+            }
+
+            if (db_) {
+                yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
+                    .context_text = vr.context,
+                    .detected_classes = unique_classes,
+                    .source_model = config_.llava.model,
+                    .prompt_used = vision.lastPrompt(),
+                    .response_time_seconds = vr.response_time_seconds,
+                    .is_valid = vr.is_valid,
+                });
+            }
+        }
+    }
+
+    // 17. Cleanup: remove from active events
     {
         std::lock_guard lock(events_mutex_);
         auto it = active_events_.find(camera_id);

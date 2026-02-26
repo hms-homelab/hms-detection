@@ -34,6 +34,22 @@ struct EventLogger {
     static void log_detections(DbPool& db,
                                const std::string& event_id,
                                const std::vector<DetectionRecord>& detections);
+
+    /// AI vision context record for LLaVA analysis results
+    struct AiVisionRecord {
+        std::string context_text;
+        std::vector<std::string> detected_classes;
+        std::string source_model = "llava:7b";
+        std::string prompt_used;
+        double response_time_seconds = 0;
+        bool is_valid = true;
+    };
+
+    /// Log AI vision context analysis to ai_vision_context table
+    static void log_ai_context(DbPool& db,
+                               const std::string& event_id,
+                               const std::string& camera_id,
+                               const AiVisionRecord& record);
 };
 
 }  // namespace yolo

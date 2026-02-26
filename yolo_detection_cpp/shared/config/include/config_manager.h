@@ -67,6 +67,16 @@ struct TimelineConfig {
     std::vector<std::string> cors_origins = {"http://localhost:4200"};
 };
 
+struct LlavaConfig {
+    bool enabled = false;
+    std::string endpoint = "http://localhost:8098";
+    std::string model = "llava:7b";
+    int max_words = 15;
+    int timeout_seconds = 60;
+    std::unordered_map<std::string, std::string> prompts;  // camera_id → template
+    std::string default_prompt = "In {max_words} words or less, describe only the {class} in the green box. Start with 'A {class} is' and describe its action.";
+};
+
 struct LoggingConfig {
     std::string level = "info";
     std::string file = "logs/yolo_api.log";
@@ -82,6 +92,7 @@ struct AppConfig {
     ApiConfig api;
     DatabaseConfig database;
     TimelineConfig timeline;
+    LlavaConfig llava;
     LoggingConfig logging;
 };
 
