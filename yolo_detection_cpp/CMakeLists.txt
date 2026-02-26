@@ -1,13 +1,23 @@
 cmake_minimum_required(VERSION 3.20)
-project(yolo_detection_cpp VERSION 1.0.0 LANGUAGES CXX)
+project(yolo_detection_cpp VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Generate version header from single source of truth
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/shared/common/include/version.h.in
+    ${CMAKE_BINARY_DIR}/generated/version.h
+)
+
 # ── Common dependencies ──────────────────────────────────────────────────────
 
 option(BUILD_TESTS "Build unit tests" ON)
+
+if(BUILD_TESTS)
+    enable_testing()
+endif()
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)          # target: yaml-cpp::yaml-cpp

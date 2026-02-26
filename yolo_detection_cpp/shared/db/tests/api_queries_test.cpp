@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "api_queries.h"
+#include "event_logger.h"
 #include "config_manager.h"
 
 // These tests validate the query function interfaces and JSON output structure.
@@ -112,4 +113,33 @@ TEST_CASE("JSON event detail structure with detections", "[db][queries]") {
     CHECK(detail["detections"].size() == 1);
     CHECK(detail["detections"][0]["class_name"] == "person");
     CHECK(detail["detections"][0]["confidence"] == 0.95);
+}
+
+TEST_CASE("AiVisionRecord has correct defaults", "[db][event_logger]") {
+    yolo::EventLogger::AiVisionRecord record;
+
+    CHECK(record.context_text.empty());
+    CHECK(record.detected_classes.empty());
+    CHECK(record.source_model == "llava:7b");
+    CHECK(record.prompt_used.empty());
+    CHECK(record.response_time_seconds == 0);
+    CHECK(record.is_valid == true);
+}
+
+TEST_CASE("AiVisionRecord designated initializer fields", "[db][event_logger]") {
+    yolo::EventLogger::AiVisionRecord record{
+        .context_text = "A person walking on the patio",
+        .detected_classes = {"person", "dog"},
+        .source_model = "llava:13b",
+        .prompt_used = "Describe the person",
+        .response_time_seconds = 12.5,
+        .is_valid = true,
+    };
+
+    CHECK(record.context_text == "A person walking on the patio");
+    CHECK(record.detected_classes.size() == 2);
+    CHECK(record.detected_classes[0] == "person");
+    CHECK(record.source_model == "llava:13b");
+    CHECK(record.response_time_seconds == 12.5);
+    CHECK(record.is_valid == true);
 }

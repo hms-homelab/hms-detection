@@ -147,6 +147,68 @@ cameras:
     CHECK(config.cameras.at("test").name == "Test Camera");
 }
 
+TEST_CASE("ConfigManager loads llava settings", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+llava:
+  enabled: true
+  endpoint: "http://10.0.0.5:11434"
+  model: "llava:13b"
+  max_words: 20
+  timeout_seconds: 90
+  default_prompt: "Custom default: {class} in {max_words} words."
+  prompts:
+    patio: "Patio prompt for {class}."
+    front_door: "Front door sees a {class}."
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.llava.enabled == true);
+    CHECK(config.llava.endpoint == "http://10.0.0.5:11434");
+    CHECK(config.llava.model == "llava:13b");
+    CHECK(config.llava.max_words == 20);
+    CHECK(config.llava.timeout_seconds == 90);
+    CHECK(config.llava.default_prompt == "Custom default: {class} in {max_words} words.");
+
+    REQUIRE(config.llava.prompts.size() == 2);
+    CHECK(config.llava.prompts.at("patio") == "Patio prompt for {class}.");
+    CHECK(config.llava.prompts.at("front_door") == "Front door sees a {class}.");
+}
+
+TEST_CASE("ConfigManager llava defaults when section missing", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.llava.enabled == false);
+    CHECK(config.llava.model == "llava:7b");
+    CHECK(config.llava.max_words == 15);
+    CHECK(config.llava.timeout_seconds == 60);
+    CHECK(config.llava.prompts.empty());
+}
+
+TEST_CASE("ConfigManager llava prompts map is camera-specific", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+llava:
+  enabled: true
+  prompts:
+    default: "Default: {class}"
+    patio: "Patio: {class}"
+    side_window: "Side: {class}"
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    REQUIRE(config.llava.prompts.size() == 3);
+    CHECK(config.llava.prompts.count("default") == 1);
+    CHECK(config.llava.prompts.count("patio") == 1);
+    CHECK(config.llava.prompts.count("side_window") == 1);
+}
+
 TEST_CASE("ConfigManager throws on invalid file", "[config]") {
     REQUIRE_THROWS_AS(
         yolo::ConfigManager::load("/nonexistent/path.yaml"),

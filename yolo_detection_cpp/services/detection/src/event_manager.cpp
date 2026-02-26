@@ -70,16 +70,33 @@ void EventManager::start() {
 void EventManager::stop() {
     running_ = false;
 
-    std::lock_guard lock(events_mutex_);
-    for (auto& [cam_id, event] : active_events_) {
-        event->stop_requested = true;
-    }
-    for (auto& [cam_id, event] : active_events_) {
-        if (event->thread.joinable()) {
-            event->thread.join();
+    std::vector<std::thread> threads_to_join;
+    {
+        std::lock_guard lock(events_mutex_);
+        for (auto& [cam_id, event] : active_events_) {
+            event->stop_requested = true;
         }
+        // Move all threads out so we can join without holding the lock
+        for (auto& [cam_id, event] : active_events_) {
+            if (event->thread.joinable()) {
+                threads_to_join.push_back(std::move(event->thread));
+            }
+        }
+        active_events_.clear();
+
+        // Also collect orphaned threads
+        for (auto& t : orphaned_threads_) {
+            if (t.joinable()) {
+                threads_to_join.push_back(std::move(t));
+            }
+        }
+        orphaned_threads_.clear();
     }
-    active_events_.clear();
+
+    // Join all threads without holding the mutex
+    for (auto& t : threads_to_join) {
+        t.join();
+    }
     spdlog::info("EventManager: stopped");
 }
 
@@ -89,28 +106,37 @@ size_t EventManager::activeEventCount() const {
 }
 
 void EventManager::onMotionStart(const std::string& camera_id, int post_roll_seconds) {
-    std::lock_guard lock(events_mutex_);
+    // Join any previously orphaned threads (non-blocking if they've finished)
+    joinOrphanedThreads();
 
-    // Cancel previous event for this camera if still running
-    auto it = active_events_.find(camera_id);
-    if (it != active_events_.end()) {
-        spdlog::info("EventManager: cancelling previous event for {}", camera_id);
-        it->second->stop_requested = true;
-        if (it->second->thread.joinable()) {
-            it->second->thread.detach();  // Let it finish in background
+    std::thread old_thread;
+
+    {
+        std::lock_guard lock(events_mutex_);
+
+        // Cancel previous event for this camera if still running
+        auto it = active_events_.find(camera_id);
+        if (it != active_events_.end()) {
+            spdlog::info("EventManager: cancelling previous event for {}", camera_id);
+            it->second->stop_requested = true;
+            // Move the old thread to orphaned list instead of detaching
+            if (it->second->thread.joinable()) {
+                orphaned_threads_.push_back(std::move(it->second->thread));
+            }
+            active_events_.erase(it);
         }
-        active_events_.erase(it);
+
+        // Spawn new event thread
+        auto event = std::make_unique<ActiveEvent>();
+        auto* event_ptr = event.get();
+        event->thread = std::thread([this, camera_id, post_roll_seconds, event_ptr]() {
+            processEvent(camera_id, post_roll_seconds);
+            event_ptr->running = false;
+        });
+
+        active_events_[camera_id] = std::move(event);
     }
 
-    // Spawn new event thread
-    auto event = std::make_unique<ActiveEvent>();
-    auto* event_ptr = event.get();
-    event->thread = std::thread([this, camera_id, post_roll_seconds, event_ptr]() {
-        processEvent(camera_id, post_roll_seconds);
-        event_ptr->running = false;
-    });
-
-    active_events_[camera_id] = std::move(event);
     spdlog::info("EventManager: motion start for {}", camera_id);
 }
 
@@ -121,6 +147,20 @@ void EventManager::onMotionStop(const std::string& camera_id) {
     if (it != active_events_.end()) {
         it->second->stop_requested = true;
         spdlog::info("EventManager: motion stop for {}", camera_id);
+    }
+}
+
+void EventManager::joinOrphanedThreads() {
+    std::vector<std::thread> to_join;
+    {
+        std::lock_guard lock(events_mutex_);
+        // Move all orphaned threads out for joining
+        to_join.swap(orphaned_threads_);
+    }
+    for (auto& t : to_join) {
+        if (t.joinable()) {
+            t.join();
+        }
     }
 }
 
@@ -474,12 +514,14 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         }
     }
 
-    // 17. Cleanup: remove from active events
+    // 17. Cleanup: move finished thread to orphaned list for safe join later
     {
         std::lock_guard lock(events_mutex_);
         auto it = active_events_.find(camera_id);
         if (it != active_events_.end() && !it->second->running) {
-            it->second->thread.detach();
+            if (it->second->thread.joinable()) {
+                orphaned_threads_.push_back(std::move(it->second->thread));
+            }
             active_events_.erase(it);
         }
     }

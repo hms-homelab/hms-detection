@@ -18,6 +18,7 @@ target_include_directories(yolo_shared PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/common/include
     ${CMAKE_CURRENT_SOURCE_DIR}/db/include
     ${CMAKE_CURRENT_SOURCE_DIR}/mqtt/include
+    ${CMAKE_BINARY_DIR}/generated
 )
 
 target_link_libraries(yolo_shared PUBLIC

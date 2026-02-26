@@ -46,11 +46,16 @@ std::unique_ptr<pqxx::connection> DbPool::create_connection() {
 }
 
 DbPool::ConnectionGuard DbPool::acquire() {
-    std::unique_lock lock(mutex_);
-    cv_.wait(lock, [this] { return !pool_.empty(); });
+    std::unique_ptr<pqxx::connection> conn;
 
-    auto conn = std::move(pool_.front());
-    pool_.pop();
+    {
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this] { return !pool_.empty(); });
+
+        conn = std::move(pool_.front());
+        pool_.pop();
+    }
+    // Lock released — health check runs without blocking other threads
 
     // Verify connection is still alive
     try {
@@ -62,6 +67,7 @@ DbPool::ConnectionGuard DbPool::acquire() {
             conn = create_connection();
         } catch (const std::exception& e) {
             spdlog::error("Failed to reconnect: {}", e.what());
+            // Return nothing useful — re-add a fresh attempt or rethrow
             throw;
         }
     }

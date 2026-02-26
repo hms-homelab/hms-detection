@@ -53,10 +53,12 @@ if(BUILD_TESTS)
         tests/camera_buffer_test.cpp
         tests/buffer_service_test.cpp
         tests/detection_engine_test.cpp
+        tests/vision_client_test.cpp
         src/rtsp_capture.cpp
         src/buffer_service.cpp
         src/detection_engine.cpp
         src/detection_worker.cpp
+        src/vision_client.cpp
     )
 
     target_include_directories(detection_tests PRIVATE
@@ -67,6 +69,7 @@ if(BUILD_TESTS)
     target_link_libraries(detection_tests PRIVATE
         yolo_shared
         Catch2::Catch2WithMain
+        Drogon::Drogon
         PkgConfig::avformat
         PkgConfig::avcodec
         PkgConfig::avutil

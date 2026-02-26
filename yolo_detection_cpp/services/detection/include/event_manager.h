@@ -65,6 +65,9 @@ private:
 
     mutable std::mutex events_mutex_;
     std::unordered_map<std::string, std::unique_ptr<ActiveEvent>> active_events_;
+    std::vector<std::thread> orphaned_threads_;
+
+    void joinOrphanedThreads();
 
     std::atomic<bool> running_{false};
 };

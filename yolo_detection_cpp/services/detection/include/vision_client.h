@@ -32,11 +32,15 @@ public:
     static std::string selectPrimaryClass(
         const std::vector<std::string>& classes);
 
-private:
+    /// Build the prompt for a given camera and detected class.
+    /// Uses camera-specific prompt if configured, otherwise default.
     std::string buildPrompt(const std::string& camera_id,
                             const std::string& detected_class);
 
+    /// Base64-encode binary data (e.g. JPEG bytes)
     static std::string base64Encode(const std::vector<unsigned char>& data);
+
+private:
 
     yolo::LlavaConfig config_;
     std::string last_prompt_;

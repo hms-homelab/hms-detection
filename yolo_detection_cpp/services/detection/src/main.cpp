@@ -11,6 +11,7 @@ extern "C" {
 #include <libavutil/log.h>
 }
 
+#include "version.h"
 #include "config_manager.h"
 #include "buffer_service.h"
 #include "mqtt_client.h"
@@ -101,7 +102,7 @@ int main(int argc, char* argv[]) {
         auto config = yolo::ConfigManager::load(config_path);
 
         setup_logging(config.logging);
-        spdlog::info("Starting hms-detection service v3.0.0");
+        spdlog::info("Starting hms-detection service v{}", HMS_VERSION);
         spdlog::info("Config: {}", config_path);
 
         // Initialize FFmpeg
