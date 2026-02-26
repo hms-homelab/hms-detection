@@ -3,9 +3,6 @@ name: Build and push hms-detection
 on:
   push:
     branches: [main]
-    paths:
-      - 'yolo_detection_cpp/**'
-      - 'Dockerfile'
   workflow_dispatch:
 
 env:
