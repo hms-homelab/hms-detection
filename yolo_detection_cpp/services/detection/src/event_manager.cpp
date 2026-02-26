@@ -154,13 +154,16 @@ void EventManager::joinOrphanedThreads() {
     std::vector<std::thread> to_join;
     {
         std::lock_guard lock(events_mutex_);
-        // Move all orphaned threads out for joining
-        to_join.swap(orphaned_threads_);
-    }
-    for (auto& t : to_join) {
-        if (t.joinable()) {
-            t.join();
+        // Collect only threads that have finished (non-blocking check)
+        std::vector<std::thread> still_running;
+        for (auto& t : orphaned_threads_) {
+            if (t.joinable()) {
+                // Try detaching instead of blocking — these threads have
+                // timeouts on all operations and will finish on their own.
+                t.detach();
+            }
         }
+        orphaned_threads_.clear();
     }
 }
 
@@ -416,6 +419,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
 
     // 13. Publish result to MQTT
+    std::string base_url = "http://" + config_.api.host + ":" + std::to_string(config_.api.port);
+    if (config_.api.host == "0.0.0.0") {
+        base_url = "http://192.168.2.5:" + std::to_string(config_.api.port);
+    }
+
     if (mqtt_) {
         json result_msg = {
             {"camera_id", camera_id},
@@ -428,8 +436,8 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             {"detection_message", detection_message},
             {"frames_processed", recorder.framesWritten()},
             {"processing_time_seconds", std::round(duration_seconds * 100) / 100},
-            {"snapshot_url", snapshot_filename.empty() ? json(nullptr) : json("/snapshots/" + snapshot_filename)},
-            {"recording_url", recorder.fileName().empty() ? json(nullptr) : json("/events/" + recorder.fileName())},
+            {"snapshot_url", snapshot_filename.empty() ? json(nullptr) : json(base_url + "/snapshots/" + snapshot_filename)},
+            {"recording_url", recorder.fileName().empty() ? json(nullptr) : json(base_url + "/events/" + recorder.fileName())},
             {"recording_filename", recorder.fileName()},
         };
         mqtt_->publish(prefix + "/" + camera_id + "/result", result_msg.dump());
@@ -453,65 +461,76 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         mqtt_->publish(prefix + "/" + camera_id + "/detected", "OFF");
     }
 
-    // 15. Log to database
-    if (db_) {
-        yolo::EventLogger::create_event(*db_, event_id, camera_id,
-                                        recorder.fileName(), snapshot_filename);
+    // 15. Log to database (non-blocking — catch exceptions to prevent hang)
+    try {
+        if (db_) {
+            yolo::EventLogger::create_event(*db_, event_id, camera_id,
+                                            recorder.fileName(), snapshot_filename);
 
-        // Log deduplicated detections
-        std::vector<yolo::EventLogger::DetectionRecord> det_records;
-        for (const auto& [cls, d] : unique_dets) {
-            det_records.push_back({d.class_name, d.confidence, d.x1, d.y1, d.x2, d.y2});
+            std::vector<yolo::EventLogger::DetectionRecord> det_records;
+            for (const auto& [cls, d] : unique_dets) {
+                det_records.push_back({d.class_name, d.confidence, d.x1, d.y1, d.x2, d.y2});
+            }
+            yolo::EventLogger::log_detections(*db_, event_id, det_records);
+
+            yolo::EventLogger::complete_event(*db_, event_id, duration_seconds,
+                                              recorder.framesWritten(),
+                                              static_cast<int>(all_detections.size()));
         }
-        yolo::EventLogger::log_detections(*db_, event_id, det_records);
-
-        yolo::EventLogger::complete_event(*db_, event_id, duration_seconds,
-                                          recorder.framesWritten(),
-                                          static_cast<int>(all_detections.size()));
+    } catch (const std::exception& e) {
+        spdlog::error("EventManager: DB logging failed for {}: {}", camera_id, e.what());
     }
 
-    // 16. LLaVA vision context (optional, runs after result already published)
-    if (config_.llava.enabled && !snapshot_path.empty() && !best_detections.empty()) {
-        float best_conf = best_detections.front().confidence;
-        auto cam_conf_it = config_.cameras.find(camera_id);
-        double conf_gate = (cam_conf_it != config_.cameras.end())
-            ? cam_conf_it->second.immediate_notification_confidence : 0.70;
+    // 16. LLaVA vision context (non-blocking — catch exceptions to prevent hang)
+    try {
+        if (config_.llava.enabled && !snapshot_path.empty() && !best_detections.empty()) {
+            float best_conf = best_detections.front().confidence;
+            auto cam_conf_it = config_.cameras.find(camera_id);
+            double conf_gate = (cam_conf_it != config_.cameras.end())
+                ? cam_conf_it->second.immediate_notification_confidence : 0.70;
 
-        if (best_conf >= conf_gate) {
-            std::string primary_class = VisionClient::selectPrimaryClass(unique_classes);
+            if (best_conf >= conf_gate) {
+                std::string primary_class = VisionClient::selectPrimaryClass(unique_classes);
 
-            VisionClient vision(config_.llava);
-            auto vr = vision.analyze(snapshot_path, camera_id, primary_class);
+                VisionClient vision(config_.llava);
+                auto vr = vision.analyze(snapshot_path, camera_id, primary_class);
 
-            if (vr.is_valid && mqtt_) {
-                json context_msg = {
-                    {"camera_id", camera_id},
-                    {"timestamp", yolo::time_utils::now_iso8601()},
-                    {"context", vr.context},
-                    {"recording_url", recorder.fileName().empty() ? json(nullptr)
-                        : json("/events/" + recorder.fileName())},
-                    {"recording_filename", recorder.fileName()},
-                    {"snapshot_url", snapshot_filename.empty() ? json(nullptr)
-                        : json("/snapshots/" + snapshot_filename)},
-                    {"source", "llava"}
-                };
-                mqtt_->publish(prefix + "/" + camera_id + "/context",
-                               context_msg.dump());
-                spdlog::info("EventManager: published LLaVA context for {}: {}",
-                             camera_id, vr.context);
-            }
+                if (vr.is_valid && mqtt_) {
+                    json context_msg = {
+                        {"camera_id", camera_id},
+                        {"timestamp", yolo::time_utils::now_iso8601()},
+                        {"context", vr.context},
+                        {"recording_url", recorder.fileName().empty() ? json(nullptr)
+                            : json(base_url + "/events/" + recorder.fileName())},
+                        {"recording_filename", recorder.fileName()},
+                        {"snapshot_url", snapshot_filename.empty() ? json(nullptr)
+                            : json(base_url + "/snapshots/" + snapshot_filename)},
+                        {"source", "llava"}
+                    };
+                    mqtt_->publish(prefix + "/" + camera_id + "/context",
+                                   context_msg.dump());
+                    spdlog::info("EventManager: published LLaVA context for {}: {}",
+                                 camera_id, vr.context);
+                }
 
-            if (db_) {
-                yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
-                    .context_text = vr.context,
-                    .detected_classes = unique_classes,
-                    .source_model = config_.llava.model,
-                    .prompt_used = vision.lastPrompt(),
-                    .response_time_seconds = vr.response_time_seconds,
-                    .is_valid = vr.is_valid,
-                });
+                if (db_) {
+                    try {
+                        yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
+                            .context_text = vr.context,
+                            .detected_classes = unique_classes,
+                            .source_model = config_.llava.model,
+                            .prompt_used = vision.lastPrompt(),
+                            .response_time_seconds = vr.response_time_seconds,
+                            .is_valid = vr.is_valid,
+                        });
+                    } catch (const std::exception& e) {
+                        spdlog::error("EventManager: LLaVA DB log failed for {}: {}", camera_id, e.what());
+                    }
+                }
             }
         }
+    } catch (const std::exception& e) {
+        spdlog::error("EventManager: LLaVA failed for {}: {}", camera_id, e.what());
     }
 
     // 17. Cleanup: move finished thread to orphaned list for safe join later

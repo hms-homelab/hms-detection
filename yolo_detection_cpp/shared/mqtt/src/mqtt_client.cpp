@@ -77,10 +77,14 @@ void MqttClient::publish(const std::string& topic, const std::string& payload,
     if (!client_ || !client_->is_connected()) return;
 
     try {
-        // Fire-and-forget: no token->wait() — safe from Paho callbacks
-        client_->publish(topic, payload.data(), payload.size(), qos, retain);
+        // Force QoS 0 for non-retained messages — true fire-and-forget,
+        // no delivery token tracking, no blocking on internal buffer.
+        int effective_qos = retain ? qos : 0;
+        auto tok = client_->publish(topic, payload.data(), payload.size(),
+                                    effective_qos, retain);
+        // Don't wait on the token — let it complete asynchronously
     } catch (const mqtt::exception& e) {
-        spdlog::debug("MQTT: publish failed on {}: {}", topic, e.what());
+        spdlog::warn("MQTT: publish failed on {}: {}", topic, e.what());
     }
 }
 

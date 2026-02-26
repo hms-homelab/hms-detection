@@ -165,7 +165,7 @@ int main(int argc, char* argv[]) {
         auto& app = drogon::app();
         app.setLogLevel(trantor::Logger::kWarn);
         app.addListener(config.api.host, config.api.port);
-        app.setThreadNum(2);
+        app.setThreadNum(4);
         app.setMaxConnectionNum(100);
 
         // Global CORS headers
@@ -179,6 +179,45 @@ int main(int argc, char* argv[]) {
                                 "Content-Type, Authorization, Accept");
             }
         );
+
+        // Static file serving for snapshots and events
+        auto snapshots_dir = config.timeline.snapshots_dir;
+        auto events_dir = config.timeline.events_dir;
+
+        app.registerHandler(
+            "/snapshots/{filename}",
+            [snapshots_dir](const drogon::HttpRequestPtr& /*req*/,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& filename) {
+                // Prevent path traversal
+                if (filename.find("..") != std::string::npos || filename.find('/') != std::string::npos) {
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k403Forbidden);
+                    callback(resp);
+                    return;
+                }
+                auto path = snapshots_dir + "/" + filename;
+                auto resp = drogon::HttpResponse::newFileResponse(path);
+                callback(resp);
+            },
+            {drogon::Get});
+
+        app.registerHandler(
+            "/events/{filename}",
+            [events_dir](const drogon::HttpRequestPtr& /*req*/,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& filename) {
+                if (filename.find("..") != std::string::npos || filename.find('/') != std::string::npos) {
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k403Forbidden);
+                    callback(resp);
+                    return;
+                }
+                auto path = events_dir + "/" + filename;
+                auto resp = drogon::HttpResponse::newFileResponse(path);
+                callback(resp);
+            },
+            {drogon::Get});
 
         spdlog::info("Listening on {}:{}", config.api.host, config.api.port);
         spdlog::info("Cameras: {}", g_buffer_service->cameraIds().size());

@@ -50,7 +50,10 @@ DbPool::ConnectionGuard DbPool::acquire() {
 
     {
         std::unique_lock lock(mutex_);
-        cv_.wait(lock, [this] { return !pool_.empty(); });
+        // Wait up to 10 seconds for a free connection
+        if (!cv_.wait_for(lock, std::chrono::seconds(10), [this] { return !pool_.empty(); })) {
+            throw std::runtime_error("DB pool exhausted — no connection available after 10s");
+        }
 
         conn = std::move(pool_.front());
         pool_.pop();
@@ -67,7 +70,6 @@ DbPool::ConnectionGuard DbPool::acquire() {
             conn = create_connection();
         } catch (const std::exception& e) {
             spdlog::error("Failed to reconnect: {}", e.what());
-            // Return nothing useful — re-add a fresh attempt or rethrow
             throw;
         }
     }

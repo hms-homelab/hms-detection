@@ -5,6 +5,7 @@ pkg_check_modules(avformat REQUIRED IMPORTED_TARGET libavformat)
 pkg_check_modules(avcodec  REQUIRED IMPORTED_TARGET libavcodec)
 pkg_check_modules(avutil   REQUIRED IMPORTED_TARGET libavutil)
 pkg_check_modules(swscale  REQUIRED IMPORTED_TARGET libswscale)
+pkg_check_modules(libcurl  REQUIRED IMPORTED_TARGET libcurl)
 
 # ONNX Runtime — use find_library since Debian doesn't ship pkg-config for it
 find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
@@ -44,6 +45,7 @@ target_link_libraries(hms_detection PRIVATE
     PkgConfig::avcodec
     PkgConfig::avutil
     PkgConfig::swscale
+    PkgConfig::libcurl
     ${ONNXRUNTIME_LIBRARY}
 )
 
@@ -74,6 +76,7 @@ if(BUILD_TESTS)
         PkgConfig::avcodec
         PkgConfig::avutil
         PkgConfig::swscale
+        PkgConfig::libcurl
         ${ONNXRUNTIME_LIBRARY}
     )
 

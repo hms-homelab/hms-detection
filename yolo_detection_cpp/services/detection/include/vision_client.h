@@ -7,7 +7,7 @@
 namespace hms {
 
 /// Synchronous Ollama LLaVA client for vision context generation.
-/// Uses Drogon's HttpClient internally with std::promise/future for blocking.
+/// Uses libcurl internally — fully decoupled from Drogon's event loop.
 class VisionClient {
 public:
     struct Result {
