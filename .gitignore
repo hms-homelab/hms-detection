@@ -1,0 +1,25 @@
+# Config with real credentials
+/config.yaml
+/go2rtc.yaml
+
+# C++ build artifacts
+yolo_detection_cpp/build/
+yolo_detection_cpp/vcpkg_installed/
+
+# YOLO models
+*.pt
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

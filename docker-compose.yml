@@ -1,0 +1,22 @@
+services:
+  hms-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/hms-homelab/hms-detection:latest
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+    network_mode: host    # Needs access to go2rtc on localhost:8554
+    restart: unless-stopped
+    depends_on:
+      - go2rtc
+
+  go2rtc:
+    image: alexxit/go2rtc
+    ports:
+      - "8554:8554"
+      - "1984:1984"
+      - "8555:8555"
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+    restart: unless-stopped

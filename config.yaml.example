@@ -1,0 +1,65 @@
+# hms-detection configuration example
+# Copy to config.yaml and update with your values
+
+cameras:
+  patio:
+    name: "Patio"
+    rtsp_url: "rtsp://admin:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1"
+    enabled: true
+    classes: [person, dog, cat]
+    confidence_threshold: 0.5
+  front_door:
+    name: "Front Door"
+    rtsp_url: "rtsp://admin:password@192.168.1.101:554/cam/realmonitor?channel=1&subtype=1"
+    enabled: true
+    classes: [person, dog, package]
+    confidence_threshold: 0.5
+  side_window:
+    name: "Side Window"
+    rtsp_url: "rtsp://admin:password@192.168.1.102:554/cam/realmonitor?channel=1&subtype=1"
+    enabled: true
+    classes: [person, car, dog, cat]
+
+# Buffer settings (ring buffer per camera)
+buffer:
+  preroll_seconds: 5    # Seconds of pre-roll to keep in buffer
+  fps: 15               # Expected camera FPS
+  max_buffer_size_mb: 50
+
+# Detection settings (future phase)
+detection:
+  model_path: "yolo11s.pt"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  max_detections: 10
+
+# MQTT settings (future phase)
+mqtt:
+  broker: "localhost"
+  port: 1883
+  username: ""
+  password: ""
+  topic_prefix: "yolo_detection"
+  qos: 1
+
+# API server
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+
+# Database (future phase)
+database:
+  host: "localhost"
+  port: 5432
+  user: "dbuser"
+  password: ""
+  database: "ai_context"
+  pool_size: 4
+
+# Logging
+logging:
+  level: "INFO"
+  file: "logs/hms_detection.log"
+  max_bytes: 10485760
+  backup_count: 5
