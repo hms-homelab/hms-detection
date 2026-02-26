@@ -1,6 +1,7 @@
 # hms-detection v2.0.0
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
+[![Build](https://github.com/hms-homelab/hms-detection/actions/workflows/build.yml/badge.svg)](https://github.com/hms-homelab/hms-detection/actions)
 
 Real-time YOLO object detection, event recording, and AI vision context for security cameras. Built with C++20, FFmpeg, ONNX Runtime, and Drogon.
 
