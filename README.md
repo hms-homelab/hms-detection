@@ -2,6 +2,7 @@
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 [![Build](https://github.com/hms-homelab/hms-detection/actions/workflows/build.yml/badge.svg)](https://github.com/hms-homelab/hms-detection/actions)
+[![GHCR](https://img.shields.io/badge/ghcr.io-hms--detection-blue?logo=docker)](https://github.com/hms-homelab/hms-detection/pkgs/container/hms-detection)
 
 Real-time YOLO object detection, event recording, and AI vision context for security cameras. Built with C++20, FFmpeg, ONNX Runtime, and Drogon.
 
