@@ -1,5 +1,7 @@
 # hms-detection v2.0.0
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
+
 Real-time YOLO object detection, event recording, and AI vision context for security cameras. Built with C++20, FFmpeg, ONNX Runtime, and Drogon.
 
 ## Features
@@ -197,3 +199,10 @@ Returns the latest captured frame as a JPEG image.
 - [x] **Phase 4**: Event recording (FFmpeg mux), MQTT client, DB logging
 - [x] **Phase 5**: LLaVA vision context (Ollama integration)
 - [x] **Phase 6**: Unit tests, bug fixes, versioning, README
+---
+
+## ☕ Support
+
+If this project is useful to you, consider buying me a coffee!
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/aamat09)
