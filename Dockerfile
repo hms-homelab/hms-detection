@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhiredis-dev default-libmysqlclient-dev \
     libssl-dev libkrb5-dev \
     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+    libcurl4-openssl-dev \
     libonnxruntime-dev \
     libpaho-mqttpp-dev libpaho-mqtt-dev \
     libcatch2-dev \
@@ -41,6 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libuuid1 libbrotli1 libsqlite3-0 libhiredis1.1.0 libmariadb3 \
     libssl3 libkrb5-3 \
     libavformat61 libavcodec61 libavutil59 libswscale8 \
+    libcurl4t64 \
     libonnxruntime1.21 \
     libpaho-mqttpp3-1 libpaho-mqtt1.3 \
     curl \
