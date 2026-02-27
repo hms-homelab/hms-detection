@@ -7,7 +7,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Generate version header from single source of truth
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/shared/common/include/version.h.in
+    ${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
     ${CMAKE_BINARY_DIR}/generated/version.h
 )
 
@@ -32,7 +32,17 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(pqxx REQUIRED IMPORTED_TARGET libpqxx)
 # Creates: PkgConfig::pqxx
 
-# ── Subdirectories ───────────────────────────────────────────────────────────
+# ── Shared library (via FetchContent) ────────────────────────────────────────
 
-add_subdirectory(shared)
+include(FetchContent)
+FetchContent_Declare(
+    hms_shared
+    GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
+    GIT_TAG        v1.0.0
+)
+set(HMS_SHARED_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(hms_shared)
+
+# ── Service ──────────────────────────────────────────────────────────────────
+
 add_subdirectory(services/detection)

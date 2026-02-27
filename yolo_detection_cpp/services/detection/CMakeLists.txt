@@ -35,11 +35,12 @@ add_executable(hms_detection
 
 target_include_directories(hms_detection PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/generated
     ${ONNXRUNTIME_INCLUDE_DIR}/..
 )
 
 target_link_libraries(hms_detection PRIVATE
-    yolo_shared
+    hms_shared
     Drogon::Drogon
     PkgConfig::avformat
     PkgConfig::avcodec
@@ -65,11 +66,12 @@ if(BUILD_TESTS)
 
     target_include_directories(detection_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_BINARY_DIR}/generated
         ${ONNXRUNTIME_INCLUDE_DIR}/..
     )
 
     target_link_libraries(detection_tests PRIVATE
-        yolo_shared
+        hms_shared
         Catch2::Catch2WithMain
         Drogon::Drogon
         PkgConfig::avformat

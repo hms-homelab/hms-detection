@@ -17,6 +17,14 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "local-shared",
+      "inherits": "system-deps",
+      "displayName": "Local hms-shared (dev)",
+      "cacheVariables": {
+        "FETCHCONTENT_SOURCE_DIR_HMS_SHARED": "/opt/yolo_detection/hms-shared"
+      }
     }
   ],
   "buildPresets": [
