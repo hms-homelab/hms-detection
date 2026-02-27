@@ -3,6 +3,7 @@
 /go2rtc.yaml
 
 # C++ build artifacts
+build/
 yolo_detection_cpp/build/
 yolo_detection_cpp/vcpkg_installed/
 
