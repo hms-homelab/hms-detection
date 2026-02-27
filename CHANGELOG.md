@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.2.0 (2026-02-27)
+
+### Changed
+- **Build output relocated**: binary now builds to `build/` at project root instead of `yolo_detection_cpp/build/`
+- **Install directory**: service runs from `/opt/hms-detection/` (binary, config, model, logs)
+- **CMake presets**: removed vcpkg presets, `system-deps` is now the default (Release mode)
+- **Systemd service**: `WorkingDirectory` and `ExecStart` point to `/opt/hms-detection/`
+
+### Added
+- `install.sh`: post-build script that copies binary, config, and ONNX model to `/opt/hms-detection/`
+
+### Removed
+- vcpkg build presets (using system-installed Debian packages only)
+- Timeline-related build targets from CMakePresets (moved to hms-timeline repo)
+
 ## v2.1.0 (2026-02-26)
 
 ### Fixed
