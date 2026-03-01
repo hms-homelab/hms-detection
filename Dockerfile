@@ -6,7 +6,7 @@
 FROM debian:trixie-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake ninja-build git pkg-config \
+    build-essential cmake ninja-build git pkg-config ca-certificates \
     libdrogon-dev libtrantor-dev \
     libpqxx-dev libpq-dev \
     libyaml-cpp-dev libjsoncpp-dev \
