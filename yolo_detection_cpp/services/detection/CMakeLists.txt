@@ -57,10 +57,14 @@ if(BUILD_TESTS)
         tests/buffer_service_test.cpp
         tests/detection_engine_test.cpp
         tests/vision_client_test.cpp
+        tests/event_manager_test.cpp
         src/rtsp_capture.cpp
         src/buffer_service.cpp
         src/detection_engine.cpp
         src/detection_worker.cpp
+        src/event_recorder.cpp
+        src/snapshot_writer.cpp
+        src/event_manager.cpp
         src/vision_client.cpp
     )
 

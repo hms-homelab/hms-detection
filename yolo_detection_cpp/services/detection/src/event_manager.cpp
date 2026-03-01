@@ -181,6 +181,19 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
     if (!my_event) return;
 
+    // Scope guard: always remove ourselves from active_events_ on exit,
+    // regardless of early returns, so the camera can accept new events.
+    auto cleanup = std::shared_ptr<void>(nullptr, [&](void*) {
+        std::lock_guard lock(events_mutex_);
+        auto it = active_events_.find(camera_id);
+        if (it != active_events_.end() && it->second->event_id == event_id) {
+            if (it->second->thread.joinable()) {
+                it->second->thread.detach();
+            }
+            active_events_.erase(it);
+        }
+    });
+
     // 1. Publish detection started
     if (mqtt_) {
         json status_msg = {
@@ -759,17 +772,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         spdlog::error("EventManager: LLaVA failed for {}: {}", camera_id, e.what());
     }
 
-    // 17. Cleanup: move finished thread to orphaned list for safe join later
-    {
-        std::lock_guard lock(events_mutex_);
-        auto it = active_events_.find(camera_id);
-        if (it != active_events_.end() && !it->second->running) {
-            if (it->second->thread.joinable()) {
-                orphaned_threads_.push_back(std::move(it->second->thread));
-            }
-            active_events_.erase(it);
-        }
-    }
+    // 17. Cleanup handled by scope guard (runs on any exit path)
 
     spdlog::info("EventManager: event {} completed for {} ({:.1f}s, {} frames, {} detections)",
                  event_id, camera_id, duration_seconds,
