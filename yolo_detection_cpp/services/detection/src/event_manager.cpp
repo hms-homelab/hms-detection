@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <filesystem>
 #include <random>
 
 using json = nlohmann::json;
@@ -254,6 +255,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     std::unique_ptr<FrameData> best_frame;  // owned copy, not pool ref
     float best_confidence = 0.0f;
     std::vector<Detection> best_detections;
+    bool early_notification_sent = false;  // track if we already sent immediate MQTT
+    std::string early_snapshot_path;       // snapshot saved at first detection (for LLaVA)
+    std::thread llava_thread;              // LLaVA runs in parallel with recording
+    std::string llava_context;             // result from LLaVA thread
+    bool llava_valid = false;
 
     // Get camera-specific config
     float conf_threshold = static_cast<float>(config_.detection.confidence_threshold);
@@ -286,6 +292,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     auto start_time = Clock::now();
     int frames_since_detection = 0;
     constexpr int DETECTION_SAMPLE_INTERVAL = 3;  // detect every 3rd frame
+    int inference_count = 0;
+
+    spdlog::info("EventManager: [{}] live phase started ({:.0f}ms after motion start)",
+                 camera_id,
+                 std::chrono::duration<double, std::milli>(Clock::now() - start_time).count());
 
     while (!my_event->stop_requested && !recorder.isMaxDurationReached()) {
         auto frame = buffer->getLatestFrame();
@@ -300,13 +311,99 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         // Sample detection
         if (engine && engine->isLoaded() && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
             frames_since_detection = 0;
+            auto t_inf = Clock::now();
             auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
+            auto inf_ms = std::chrono::duration<double, std::milli>(Clock::now() - t_inf).count();
+            inference_count++;
+
+            if (inference_count <= 3 || !dets.empty()) {
+                spdlog::info("EventManager: [{}] YOLO inference #{}: {:.0f}ms, {} detections",
+                             camera_id, inference_count, inf_ms, dets.size());
+            }
+
             for (const auto& d : dets) {
                 all_detections.push_back(d);
                 if (d.confidence > best_confidence) {
                     best_confidence = d.confidence;
                     best_frame = copyFrame(*frame);
                     best_detections = dets;
+                }
+            }
+
+            // Early notification: publish detected ON + save snapshot + launch LLaVA
+            // all immediately on first confident detection
+            if (!dets.empty() && !early_notification_sent && mqtt_) {
+                auto first_det_ms = std::chrono::duration<double, std::milli>(
+                    Clock::now() - start_time).count();
+
+                // Build early detection payload
+                json early_dets = json::array();
+                for (const auto& d : dets) {
+                    early_dets.push_back({
+                        {"class", d.class_name},
+                        {"confidence", std::round(d.confidence * 1000) / 1000},
+                    });
+                }
+
+                json early_msg = {
+                    {"camera_id", camera_id},
+                    {"timestamp", yolo::time_utils::now_iso8601()},
+                    {"detections", early_dets},
+                    {"detection_count", static_cast<int>(dets.size())},
+                    {"detected_objects", dets[0].class_name},
+                    {"phase", "early"},
+                };
+                mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
+                mqtt_->publish(prefix + "/" + camera_id + "/detected", "ON");
+
+                spdlog::info("EventManager: [{}] EARLY notification sent at {:.0f}ms "
+                             "(first detection: {} @ {:.1f}%)",
+                             camera_id, first_det_ms,
+                             dets[0].class_name, dets[0].confidence * 100);
+                early_notification_sent = true;
+
+                // Save snapshot immediately for LLaVA (don't wait for recording to finish)
+                std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                early_snapshot_path = SnapshotWriter::save(
+                    *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                if (!early_snapshot_path.empty()) {
+                    spdlog::info("EventManager: [{}] early snapshot saved at {:.0f}ms: {}",
+                                 camera_id, first_det_ms,
+                                 std::filesystem::path(early_snapshot_path).filename().string());
+                }
+
+                // Launch LLaVA in parallel with recording (non-blocking)
+                if (config_.llava.enabled && !early_snapshot_path.empty()) {
+                    float det_conf = best_detections.front().confidence;
+                    auto cam_conf_it2 = config_.cameras.find(camera_id);
+                    double conf_gate = (cam_conf_it2 != config_.cameras.end())
+                        ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
+
+                    if (det_conf >= conf_gate) {
+                        std::vector<std::string> early_classes;
+                        for (const auto& d : dets) {
+                            early_classes.push_back(d.class_name);
+                        }
+                        std::string primary_class = VisionClient::selectPrimaryClass(early_classes);
+                        auto llava_config = config_.llava;
+                        auto snap_path = early_snapshot_path;
+
+                        llava_thread = std::thread([&llava_context, &llava_valid,
+                                                    llava_config, snap_path, camera_id, primary_class]() {
+                            try {
+                                VisionClient vision(llava_config);
+                                auto vr = vision.analyze(snap_path, camera_id, primary_class);
+                                llava_context = vr.context;
+                                llava_valid = vr.is_valid;
+                            } catch (const std::exception& e) {
+                                spdlog::error("EventManager: LLaVA thread failed for {}: {}", camera_id, e.what());
+                            }
+                        });
+
+                        spdlog::info("EventManager: [{}] LLaVA launched in parallel at {:.0f}ms",
+                                     camera_id, first_det_ms);
+                    }
                 }
             }
         }
@@ -317,6 +414,10 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
 
     // 8. Post-roll: continue recording for post_roll_seconds
+    auto postroll_start = Clock::now();
+    spdlog::info("EventManager: [{}] post-roll started ({}s), {} inferences so far, {} detections",
+                 camera_id, post_roll_seconds, inference_count, all_detections.size());
+
     recorder.requestStop(post_roll_seconds);
     while (!recorder.isPostRollComplete() && !recorder.isMaxDurationReached()) {
         auto frame = buffer->getLatestFrame();
@@ -327,7 +428,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             frames_since_detection++;
             if (engine && engine->isLoaded() && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
                 frames_since_detection = 0;
+                auto t_inf = Clock::now();
                 auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
+                auto inf_ms = std::chrono::duration<double, std::milli>(Clock::now() - t_inf).count();
+                inference_count++;
+
                 for (const auto& d : dets) {
                     all_detections.push_back(d);
                     if (d.confidence > best_confidence) {
@@ -336,19 +441,97 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                         best_detections = dets;
                     }
                 }
+
+                // Send early notification if first detection happens during post-roll
+                if (!dets.empty() && !early_notification_sent && mqtt_) {
+                    auto first_det_ms = std::chrono::duration<double, std::milli>(
+                        Clock::now() - start_time).count();
+
+                    json early_dets = json::array();
+                    for (const auto& d : dets) {
+                        early_dets.push_back({
+                            {"class", d.class_name},
+                            {"confidence", std::round(d.confidence * 1000) / 1000},
+                        });
+                    }
+
+                    json early_msg = {
+                        {"camera_id", camera_id},
+                        {"timestamp", yolo::time_utils::now_iso8601()},
+                        {"detections", early_dets},
+                        {"detection_count", static_cast<int>(dets.size())},
+                        {"detected_objects", dets[0].class_name},
+                        {"phase", "early"},
+                    };
+                    mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
+                    mqtt_->publish(prefix + "/" + camera_id + "/detected", "ON");
+
+                    spdlog::info("EventManager: [{}] EARLY notification (post-roll) at {:.0f}ms "
+                                 "(first detection: {} @ {:.1f}%)",
+                                 camera_id, first_det_ms,
+                                 dets[0].class_name, dets[0].confidence * 100);
+                    early_notification_sent = true;
+
+                    // Save snapshot + launch LLaVA in parallel
+                    std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                    early_snapshot_path = SnapshotWriter::save(
+                        *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                    if (!early_snapshot_path.empty() && config_.llava.enabled) {
+                        float det_conf = best_detections.front().confidence;
+                        auto cam_conf_it2 = config_.cameras.find(camera_id);
+                        double conf_gate = (cam_conf_it2 != config_.cameras.end())
+                            ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
+
+                        if (det_conf >= conf_gate) {
+                            std::vector<std::string> early_classes;
+                            for (const auto& d : dets) {
+                                early_classes.push_back(d.class_name);
+                            }
+                            std::string primary_class = VisionClient::selectPrimaryClass(early_classes);
+                            auto llava_config = config_.llava;
+                            auto snap_path = early_snapshot_path;
+
+                            llava_thread = std::thread([&llava_context, &llava_valid,
+                                                        llava_config, snap_path, camera_id, primary_class]() {
+                                try {
+                                    VisionClient vision(llava_config);
+                                    auto vr = vision.analyze(snap_path, camera_id, primary_class);
+                                    llava_context = vr.context;
+                                    llava_valid = vr.is_valid;
+                                } catch (const std::exception& e) {
+                                    spdlog::error("EventManager: LLaVA thread failed for {}: {}", camera_id, e.what());
+                                }
+                            });
+
+                            spdlog::info("EventManager: [{}] LLaVA launched in parallel (post-roll) at {:.0f}ms",
+                                         camera_id, first_det_ms);
+                        }
+                    }
+                }
             }
         }
         frame.reset();  // release pool ref before sleeping
         std::this_thread::sleep_for(std::chrono::milliseconds(1000 / fps));
     }
 
+    auto postroll_ms = std::chrono::duration<double, std::milli>(
+        Clock::now() - postroll_start).count();
+    spdlog::info("EventManager: [{}] post-roll complete ({:.0f}ms)", camera_id, postroll_ms);
+
     // 9. Finalize recording
+    auto t_finalize = Clock::now();
     recorder.finalize();
+    spdlog::info("EventManager: [{}] recording finalized ({:.0f}ms)",
+                 camera_id,
+                 std::chrono::duration<double, std::milli>(Clock::now() - t_finalize).count());
 
     // 10. Save snapshot (best detection frame)
-    std::string snapshot_path;
+    //     If early snapshot was already saved, update only if we got a better detection
+    std::string snapshot_path = early_snapshot_path;  // use early snapshot by default
     std::string snapshots_dir = config_.timeline.snapshots_dir;
-    if (best_frame && !best_detections.empty()) {
+    if (best_frame && !best_detections.empty() && early_snapshot_path.empty()) {
+        // No early snapshot was saved (edge case), save now
         snapshot_path = SnapshotWriter::save(*best_frame, best_detections,
                                              camera_id, snapshots_dir);
     }
@@ -418,7 +601,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         snapshot_filename = std::filesystem::path(snapshot_path).filename().string();
     }
 
-    // 13. Publish result to MQTT
+    // 13. Publish final result to MQTT (with recording URL + full stats)
     std::string base_url = "http://" + config_.api.host + ":" + std::to_string(config_.api.port);
     if (config_.api.host == "0.0.0.0") {
         base_url = "http://192.168.2.5:" + std::to_string(config_.api.port);
@@ -439,12 +622,15 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             {"snapshot_url", snapshot_filename.empty() ? json(nullptr) : json(base_url + "/snapshots/" + snapshot_filename)},
             {"recording_url", recorder.fileName().empty() ? json(nullptr) : json(base_url + "/events/" + recorder.fileName())},
             {"recording_filename", recorder.fileName()},
+            {"phase", "final"},
         };
         mqtt_->publish(prefix + "/" + camera_id + "/result", result_msg.dump());
 
-        // Binary sensor for HA
-        mqtt_->publish(prefix + "/" + camera_id + "/detected",
-                       all_detections.empty() ? "OFF" : "ON");
+        // Binary sensor for HA (early notification already sent ON if detections exist)
+        if (!early_notification_sent) {
+            mqtt_->publish(prefix + "/" + camera_id + "/detected",
+                           all_detections.empty() ? "OFF" : "ON");
+        }
 
         // Detection completed status
         json complete_msg = {
@@ -453,6 +639,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             {"camera_id", camera_id}
         };
         mqtt_->publish(prefix + "/" + camera_id + "/detection", complete_msg.dump());
+
+        spdlog::info("EventManager: [{}] final MQTT result published ({:.0f}ms after start, {} total inferences)",
+                     camera_id,
+                     std::chrono::duration<double, std::milli>(Clock::now() - start_time).count(),
+                     inference_count);
     }
 
     // 14. Reset binary sensor after a short delay
@@ -481,9 +672,48 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         spdlog::error("EventManager: DB logging failed for {}: {}", camera_id, e.what());
     }
 
-    // 16. LLaVA vision context (non-blocking — catch exceptions to prevent hang)
+    // 16. LLaVA vision context — join parallel thread if it was launched
     try {
-        if (config_.llava.enabled && !snapshot_path.empty() && !best_detections.empty()) {
+        if (llava_thread.joinable()) {
+            spdlog::info("EventManager: [{}] waiting for LLaVA thread...", camera_id);
+            llava_thread.join();
+
+            if (llava_valid && mqtt_) {
+                json context_msg = {
+                    {"camera_id", camera_id},
+                    {"timestamp", yolo::time_utils::now_iso8601()},
+                    {"context", llava_context},
+                    {"recording_url", recorder.fileName().empty() ? json(nullptr)
+                        : json(base_url + "/events/" + recorder.fileName())},
+                    {"recording_filename", recorder.fileName()},
+                    {"snapshot_url", snapshot_filename.empty() ? json(nullptr)
+                        : json(base_url + "/snapshots/" + snapshot_filename)},
+                    {"source", "llava"}
+                };
+                mqtt_->publish(prefix + "/" + camera_id + "/context",
+                               context_msg.dump());
+                spdlog::info("EventManager: published LLaVA context for {}: {}",
+                             camera_id, llava_context);
+            }
+
+            if (db_ && llava_valid) {
+                try {
+                    yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
+                        .context_text = llava_context,
+                        .detected_classes = unique_classes,
+                        .source_model = config_.llava.model,
+                        .prompt_used = "",  // not available from parallel thread
+                        .response_time_seconds = 0,  // tracked in VisionClient log
+                        .is_valid = llava_valid,
+                    });
+                } catch (const std::exception& e) {
+                    spdlog::error("EventManager: LLaVA DB log failed for {}: {}", camera_id, e.what());
+                }
+            }
+        } else if (config_.llava.enabled && !snapshot_path.empty() && !best_detections.empty()
+                   && !early_notification_sent) {
+            // Fallback: LLaVA wasn't launched early (no detection during live phase)
+            // Run synchronously now
             float best_conf = best_detections.front().confidence;
             auto cam_conf_it = config_.cameras.find(camera_id);
             double conf_gate = (cam_conf_it != config_.cameras.end())

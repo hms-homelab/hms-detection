@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.3.0 (2026-02-28)
+
+### Added
+- **Early notification**: MQTT `detected ON` and result published immediately on first YOLO detection (~300ms after motion start, was ~46s)
+- **Parallel LLaVA**: vision context runs in a background thread concurrent with recording, instead of blocking after finalization
+- **Early snapshot**: snapshot saved at first detection for LLaVA input, not deferred to end of recording
+- **Pipeline timing traces**: detailed `spdlog::info` for every phase — live start, each YOLO inference (first 3 + detections), early notification, post-roll duration, finalization, final MQTT publish, LLaVA join
+
+### Changed
+- MQTT result messages now include `"phase": "early"` or `"phase": "final"` to distinguish immediate vs complete results
+- Final `detected ON` skipped if early notification already sent (avoids duplicate HA triggers)
+- Snapshot only re-saved at finalization if no early snapshot exists
+
 ## v2.2.0 (2026-02-27)
 
 ### Changed
