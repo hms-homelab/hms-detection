@@ -47,7 +47,8 @@ private:
     void onMotionStop(const std::string& camera_id);
 
     /// Full event processing thread (one per camera, per event)
-    void processEvent(const std::string& camera_id, int post_roll_seconds);
+    void processEvent(const std::string& camera_id, int post_roll_seconds,
+                      const std::string& event_id);
 
     /// Generate UUID-like event ID
     static std::string generateEventId();
@@ -56,6 +57,7 @@ private:
         std::thread thread;
         std::atomic<bool> stop_requested{false};
         std::atomic<bool> running{true};
+        std::string event_id;  // to detect if a newer event replaced us
     };
 
     std::shared_ptr<BufferService> buffer_service_;

@@ -110,28 +110,24 @@ void EventManager::onMotionStart(const std::string& camera_id, int post_roll_sec
     // Join any previously orphaned threads (non-blocking if they've finished)
     joinOrphanedThreads();
 
-    std::thread old_thread;
-
     {
         std::lock_guard lock(events_mutex_);
 
-        // Cancel previous event for this camera if still running
+        // If an event is already running for this camera, ignore the new one
         auto it = active_events_.find(camera_id);
         if (it != active_events_.end()) {
-            spdlog::info("EventManager: cancelling previous event for {}", camera_id);
-            it->second->stop_requested = true;
-            // Move the old thread to orphaned list instead of detaching
-            if (it->second->thread.joinable()) {
-                orphaned_threads_.push_back(std::move(it->second->thread));
-            }
-            active_events_.erase(it);
+            spdlog::info("EventManager: ignoring motion start for {} (event {} already active)",
+                         camera_id, it->second->event_id);
+            return;
         }
 
         // Spawn new event thread
         auto event = std::make_unique<ActiveEvent>();
+        event->event_id = generateEventId();
         auto* event_ptr = event.get();
-        event->thread = std::thread([this, camera_id, post_roll_seconds, event_ptr]() {
-            processEvent(camera_id, post_roll_seconds);
+        auto eid = event->event_id;
+        event->thread = std::thread([this, camera_id, post_roll_seconds, event_ptr, eid]() {
+            processEvent(camera_id, post_roll_seconds, eid);
             event_ptr->running = false;
         });
 
@@ -168,9 +164,9 @@ void EventManager::joinOrphanedThreads() {
     }
 }
 
-void EventManager::processEvent(const std::string& camera_id, int post_roll_seconds) {
+void EventManager::processEvent(const std::string& camera_id, int post_roll_seconds,
+                                const std::string& event_id) {
     auto prefix = mqtt_ ? mqtt_->topicPrefix() : "yolo_detection";
-    auto event_id = generateEventId();
 
     spdlog::info("EventManager: processing event {} for {}", event_id, camera_id);
 
@@ -419,7 +415,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                  camera_id, post_roll_seconds, inference_count, all_detections.size());
 
     recorder.requestStop(post_roll_seconds);
-    while (!recorder.isPostRollComplete() && !recorder.isMaxDurationReached()) {
+    while (!my_event->stop_requested && !recorder.isPostRollComplete() && !recorder.isMaxDurationReached()) {
         auto frame = buffer->getLatestFrame();
         if (frame && frame->width == width) {
             recorder.writeFrame(*frame);
