@@ -25,6 +25,14 @@
       "cacheVariables": {
         "FETCHCONTENT_SOURCE_DIR_HMS_SHARED": "/opt/yolo_detection/hms-shared"
       }
+    },
+    {
+      "name": "gpu",
+      "inherits": "local-shared",
+      "displayName": "GPU build (ONNX Runtime from GitHub release)",
+      "cacheVariables": {
+        "ONNXRUNTIME_ROOT": "/opt/onnxruntime-gpu"
+      }
     }
   ],
   "buildPresets": [

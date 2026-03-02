@@ -26,7 +26,7 @@ static const char* COCO_NAMES[] = {
     "hair drier", "toothbrush"
 };
 
-DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes)
+DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes, bool gpu_enabled)
     : env_(ORT_LOGGING_LEVEL_WARNING, "hms-detection")
     , num_classes_(num_classes)
 {
@@ -35,6 +35,17 @@ DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes)
     Ort::SessionOptions session_options;
     session_options.SetIntraOpNumThreads(2);
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+    if (gpu_enabled) {
+        OrtCUDAProviderOptions cuda_options{};
+        cuda_options.device_id = 0;
+        try {
+            session_options.AppendExecutionProvider_CUDA(cuda_options);
+            spdlog::info("CUDA Execution Provider registered (GPU)");
+        } catch (const Ort::Exception& e) {
+            spdlog::warn("CUDA EP unavailable, falling back to CPU: {}", e.what());
+        }
+    }
 
     try {
         session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), session_options);

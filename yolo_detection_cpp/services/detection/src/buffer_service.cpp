@@ -71,7 +71,7 @@ void BufferService::loadDetectionModel() {
         return;
     }
 
-    detection_engine_ = std::make_shared<DetectionEngine>(model_path);
+    detection_engine_ = std::make_shared<DetectionEngine>(model_path, 80, config_.detection.gpu_enabled);
     if (!detection_engine_->isLoaded()) {
         spdlog::error("Failed to load detection model, detection disabled");
         detection_engine_.reset();

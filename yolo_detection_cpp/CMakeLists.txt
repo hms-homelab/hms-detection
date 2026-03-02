@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(yolo_detection_cpp VERSION 2.3.0 LANGUAGES CXX)
+project(yolo_detection_cpp VERSION 2.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +38,7 @@ include(FetchContent)
 FetchContent_Declare(
     hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
-    GIT_TAG        v1.0.0
+    GIT_TAG        v1.1.0
 )
 set(HMS_SHARED_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(hms_shared)

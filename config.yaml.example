@@ -32,6 +32,7 @@ detection:
   confidence_threshold: 0.5
   iou_threshold: 0.45
   max_detections: 10
+  gpu_enabled: false  # Set true to use NVIDIA GPU for inference (requires CUDA EP)
 
 # MQTT settings (future phase)
 mqtt:

@@ -19,7 +19,7 @@ struct Detection {
 
 class DetectionEngine {
 public:
-    explicit DetectionEngine(const std::string& model_path, int num_classes = 80);
+    explicit DetectionEngine(const std::string& model_path, int num_classes = 80, bool gpu_enabled = false);
 
     /// Run inference on a single BGR24 frame
     std::vector<Detection> detect(const FrameData& frame,

@@ -342,3 +342,20 @@ TEST_CASE("Class names - 80 COCO classes loaded", "[detection][classes]") {
     REQUIRE(names[2] == "car");
     REQUIRE(names[79] == "toothbrush");
 }
+
+// ============================================================
+// GPU-enabled constructor
+// ============================================================
+
+TEST_CASE("Constructor accepts gpu_enabled false", "[detection][gpu]") {
+    DetectionEngine engine("/nonexistent.onnx", 80, false);
+    REQUIRE_FALSE(engine.isLoaded());
+    REQUIRE(engine.classNames().size() == 80);
+}
+
+TEST_CASE("Constructor accepts gpu_enabled true and falls back", "[detection][gpu]") {
+    // No CUDA runtime in test env — should fall back to CPU gracefully
+    DetectionEngine engine("/nonexistent.onnx", 80, true);
+    REQUIRE_FALSE(engine.isLoaded());
+    REQUIRE(engine.classNames().size() == 80);
+}

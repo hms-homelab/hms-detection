@@ -7,11 +7,17 @@ pkg_check_modules(avutil   REQUIRED IMPORTED_TARGET libavutil)
 pkg_check_modules(swscale  REQUIRED IMPORTED_TARGET libswscale)
 pkg_check_modules(libcurl  REQUIRED IMPORTED_TARGET libcurl)
 
-# ONNX Runtime — use find_library since Debian doesn't ship pkg-config for it
-find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
-    PATHS /usr/include/onnxruntime /usr/local/include/onnxruntime)
-find_library(ONNXRUNTIME_LIBRARY onnxruntime
-    PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib)
+# ONNX Runtime — use ONNXRUNTIME_ROOT for GPU build, else system paths
+if(ONNXRUNTIME_ROOT)
+    set(ONNXRUNTIME_INCLUDE_DIR "${ONNXRUNTIME_ROOT}/include/onnxruntime")
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime
+        PATHS ${ONNXRUNTIME_ROOT}/lib NO_DEFAULT_PATH)
+else()
+    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+        PATHS /usr/include/onnxruntime /usr/local/include/onnxruntime)
+    find_library(ONNXRUNTIME_LIBRARY onnxruntime
+        PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib)
+endif()
 
 if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
     message(FATAL_ERROR "ONNX Runtime not found. Install libonnxruntime-dev.")

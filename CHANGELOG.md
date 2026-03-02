@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.4.0 (2026-03-02)
+
+### Added
+- **GPU inference**: config-driven CUDA Execution Provider (~25ms vs ~300ms CPU)
+- **Graceful CPU fallback**: try/catch around CUDA EP registration; falls back to CPU if unavailable
+- **`gpu` CMake preset**: bare-metal GPU builds with CUDA EP support
+- **`gpu_enabled` config field**: new `detection.gpu_enabled` option (default: `false`)
+
 ## v2.3.0 (2026-02-28)
 
 ### Added
