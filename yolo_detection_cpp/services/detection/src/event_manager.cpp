@@ -353,38 +353,46 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                                  camera_id, first_det_ms, early_snap_filename);
                 }
 
-                // Build and publish result with snapshot_url
-                json early_dets = json::array();
-                for (const auto& d : dets) {
-                    early_dets.push_back({
-                        {"class", d.class_name},
-                        {"confidence", std::round(d.confidence * 1000) / 1000},
-                    });
+                // Only publish result MQTT if confidence meets notification gate
+                float det_conf = best_detections.front().confidence;
+                auto cam_conf_it2 = config_.cameras.find(camera_id);
+                double conf_gate = (cam_conf_it2 != config_.cameras.end())
+                    ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
+
+                if (det_conf >= conf_gate) {
+                    json early_dets = json::array();
+                    for (const auto& d : dets) {
+                        early_dets.push_back({
+                            {"class", d.class_name},
+                            {"confidence", std::round(d.confidence * 1000) / 1000},
+                        });
+                    }
+
+                    json early_msg = {
+                        {"camera_id", camera_id},
+                        {"timestamp", yolo::time_utils::now_iso8601()},
+                        {"detections", early_dets},
+                        {"detection_count", static_cast<int>(dets.size())},
+                        {"detected_objects", dets[0].class_name},
+                        {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
+                            : json(base_url + "/snapshots/" + early_snap_filename)},
+                    };
+                    mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
+
+                    spdlog::info("EventManager: [{}] EARLY notification sent at {:.0f}ms "
+                                 "(first detection: {} @ {:.1f}%)",
+                                 camera_id, first_det_ms,
+                                 dets[0].class_name, dets[0].confidence * 100);
+                } else {
+                    spdlog::info("EventManager: [{}] detection at {:.0f}ms ({} @ {:.1f}%) "
+                                 "below notification gate ({:.0f}%), skipping result MQTT",
+                                 camera_id, first_det_ms,
+                                 dets[0].class_name, dets[0].confidence * 100, conf_gate * 100);
                 }
-
-                json early_msg = {
-                    {"camera_id", camera_id},
-                    {"timestamp", yolo::time_utils::now_iso8601()},
-                    {"detections", early_dets},
-                    {"detection_count", static_cast<int>(dets.size())},
-                    {"detected_objects", dets[0].class_name},
-                    {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
-                        : json(base_url + "/snapshots/" + early_snap_filename)},
-                };
-                mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
-
-                spdlog::info("EventManager: [{}] EARLY notification sent at {:.0f}ms "
-                             "(first detection: {} @ {:.1f}%)",
-                             camera_id, first_det_ms,
-                             dets[0].class_name, dets[0].confidence * 100);
                 early_notification_sent = true;
 
                 // Launch LLaVA in parallel with recording (non-blocking)
                 if (config_.llava.enabled && !early_snapshot_path.empty()) {
-                    float det_conf = best_detections.front().confidence;
-                    auto cam_conf_it2 = config_.cameras.find(camera_id);
-                    double conf_gate = (cam_conf_it2 != config_.cameras.end())
-                        ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
 
                     if (det_conf >= conf_gate) {
                         std::vector<std::string> early_classes;
@@ -465,38 +473,46 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                                      camera_id, first_det_ms, early_snap_filename);
                     }
 
-                    // Build and publish result with snapshot_url
-                    json early_dets = json::array();
-                    for (const auto& d : dets) {
-                        early_dets.push_back({
-                            {"class", d.class_name},
-                            {"confidence", std::round(d.confidence * 1000) / 1000},
-                        });
+                    // Only publish result MQTT if confidence meets notification gate
+                    float det_conf = best_detections.front().confidence;
+                    auto cam_conf_it2 = config_.cameras.find(camera_id);
+                    double conf_gate = (cam_conf_it2 != config_.cameras.end())
+                        ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
+
+                    if (det_conf >= conf_gate) {
+                        json early_dets = json::array();
+                        for (const auto& d : dets) {
+                            early_dets.push_back({
+                                {"class", d.class_name},
+                                {"confidence", std::round(d.confidence * 1000) / 1000},
+                            });
+                        }
+
+                        json early_msg = {
+                            {"camera_id", camera_id},
+                            {"timestamp", yolo::time_utils::now_iso8601()},
+                            {"detections", early_dets},
+                            {"detection_count", static_cast<int>(dets.size())},
+                            {"detected_objects", dets[0].class_name},
+                            {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
+                                : json(base_url + "/snapshots/" + early_snap_filename)},
+                        };
+                        mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
+
+                        spdlog::info("EventManager: [{}] EARLY notification (post-roll) at {:.0f}ms "
+                                     "(first detection: {} @ {:.1f}%)",
+                                     camera_id, first_det_ms,
+                                     dets[0].class_name, dets[0].confidence * 100);
+                    } else {
+                        spdlog::info("EventManager: [{}] detection (post-roll) at {:.0f}ms ({} @ {:.1f}%) "
+                                     "below notification gate ({:.0f}%), skipping result MQTT",
+                                     camera_id, first_det_ms,
+                                     dets[0].class_name, dets[0].confidence * 100, conf_gate * 100);
                     }
-
-                    json early_msg = {
-                        {"camera_id", camera_id},
-                        {"timestamp", yolo::time_utils::now_iso8601()},
-                        {"detections", early_dets},
-                        {"detection_count", static_cast<int>(dets.size())},
-                        {"detected_objects", dets[0].class_name},
-                        {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
-                            : json(base_url + "/snapshots/" + early_snap_filename)},
-                    };
-                    mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
-
-                    spdlog::info("EventManager: [{}] EARLY notification (post-roll) at {:.0f}ms "
-                                 "(first detection: {} @ {:.1f}%)",
-                                 camera_id, first_det_ms,
-                                 dets[0].class_name, dets[0].confidence * 100);
                     early_notification_sent = true;
 
                     // Launch LLaVA in parallel
                     if (!early_snapshot_path.empty() && config_.llava.enabled) {
-                        float det_conf = best_detections.front().confidence;
-                        auto cam_conf_it2 = config_.cameras.find(camera_id);
-                        double conf_gate = (cam_conf_it2 != config_.cameras.end())
-                            ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
 
                         if (det_conf >= conf_gate) {
                             std::vector<std::string> early_classes;
@@ -633,11 +649,33 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         snapshot_filename = std::filesystem::path(snapshot_path).filename().string();
     }
 
+    // Check if best detection is below notification gate — if so, delete recording
+    // (keep snapshot + DB, but no point storing video for low-confidence detections)
+    bool below_gate = false;
+    {
+        float best_conf = best_detections.empty() ? 0.0f : best_detections.front().confidence;
+        auto cam_conf_it = config_.cameras.find(camera_id);
+        double conf_gate = (cam_conf_it != config_.cameras.end())
+            ? cam_conf_it->second.immediate_notification_confidence : 0.70;
+        below_gate = (best_conf < conf_gate);
+        if (below_gate && !recorder.fileName().empty()) {
+            std::string rec_path = events_dir + "/" + recorder.fileName();
+            std::error_code ec;
+            if (std::filesystem::remove(rec_path, ec)) {
+                spdlog::info("EventManager: [{}] removed low-confidence recording {} "
+                             "(best {:.1f}% < gate {:.0f}%)",
+                             camera_id, recorder.fileName(),
+                             best_conf * 100, conf_gate * 100);
+            }
+        }
+    }
+
     // 13. Log to database (non-blocking — catch exceptions to prevent hang)
     try {
         if (db_) {
+            std::string db_recording = below_gate ? "" : recorder.fileName();
             yolo::EventLogger::create_event(*db_, event_id, camera_id,
-                                            recorder.fileName(), snapshot_filename);
+                                            db_recording, snapshot_filename);
 
             std::vector<yolo::EventLogger::DetectionRecord> det_records;
             for (const auto& [cls, d] : unique_dets) {

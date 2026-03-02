@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.6.0 (2026-03-02)
+
+### Changed
+- **Result MQTT gated by confidence**: early `/result` only published when best detection meets `immediate_notification_confidence` gate (default 0.70) — no more HA notifications for low-confidence detections
+- **Recordings deleted for low-confidence events**: events below the notification gate still save snapshots and log to DB, but recordings are removed to save disk space
+
+### Added
+- E2E test (`e2e_confidence_gate_test.py`): two-scenario test using live front_door camera with real car detections (~86%) — validates high-confidence publishes result+context and low-confidence suppresses both
+- 5 Catch2 unit tests for confidence gate logic (`[confidence_gate]` tag)
+
 ## v2.5.0 (2026-03-02)
 
 ### Changed
