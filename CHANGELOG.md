@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.5.0 (2026-03-02)
+
+### Changed
+- **Simplified MQTT**: reduced from 6 messages per event to 2 — one `result` (with `snapshot_url`) and one `context` (LLaVA description)
+- **Snapshot before publish**: snapshot is now saved before the result message so `snapshot_url` is included from the start
+- **Silent on 0 detections**: no MQTT, no snapshot, no DB write, recording file deleted — zero noise for HA
+
+### Removed
+- `/detection` started/completed status messages
+- `/detected` ON/OFF binary sensor messages
+- `phase` field from result payload (only one result now, no early/final distinction)
+- Final result message (duplicate of early result with extra stats)
+- 2-second `detected OFF` delay at end of event
+
 ## v2.4.0 (2026-03-02)
 
 ### Added

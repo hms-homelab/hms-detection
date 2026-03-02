@@ -194,17 +194,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         }
     });
 
-    // 1. Publish detection started
-    if (mqtt_) {
-        json status_msg = {
-            {"status", "started"},
-            {"timestamp", yolo::time_utils::now_iso8601()},
-            {"camera_id", camera_id}
-        };
-        mqtt_->publish(prefix + "/" + camera_id + "/detection", status_msg.dump());
-    }
-
-    // 2. Get camera buffer and detection engine
+    // 1. Get camera buffer and detection engine
     auto buffer = buffer_service_->getCameraBuffer(camera_id);
     auto engine = buffer_service_->getDetectionEngine();
     if (!buffer) {
@@ -297,6 +287,12 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         return copy;
     };
 
+    // Compute base_url early (needed for snapshot URLs in early notifications)
+    std::string base_url = "http://" + config_.api.host + ":" + std::to_string(config_.api.port);
+    if (config_.api.host == "0.0.0.0") {
+        base_url = "http://192.168.2.5:" + std::to_string(config_.api.port);
+    }
+
     // 7. Live phase: pull frames, write to recorder, sample detections
     auto start_time = Clock::now();
     int frames_since_detection = 0;
@@ -339,13 +335,25 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                 }
             }
 
-            // Early notification: publish detected ON + save snapshot + launch LLaVA
+            // Early notification: save snapshot + publish result + launch LLaVA
             // all immediately on first confident detection
             if (!dets.empty() && !early_notification_sent && mqtt_) {
                 auto first_det_ms = std::chrono::duration<double, std::milli>(
                     Clock::now() - start_time).count();
 
-                // Build early detection payload
+                // Save snapshot FIRST so we can include snapshot_url in the result
+                std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                early_snapshot_path = SnapshotWriter::save(
+                    *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                std::string early_snap_filename;
+                if (!early_snapshot_path.empty()) {
+                    early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
+                    spdlog::info("EventManager: [{}] early snapshot saved at {:.0f}ms: {}",
+                                 camera_id, first_det_ms, early_snap_filename);
+                }
+
+                // Build and publish result with snapshot_url
                 json early_dets = json::array();
                 for (const auto& d : dets) {
                     early_dets.push_back({
@@ -360,27 +368,16 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                     {"detections", early_dets},
                     {"detection_count", static_cast<int>(dets.size())},
                     {"detected_objects", dets[0].class_name},
-                    {"phase", "early"},
+                    {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
+                        : json(base_url + "/snapshots/" + early_snap_filename)},
                 };
                 mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
-                mqtt_->publish(prefix + "/" + camera_id + "/detected", "ON");
 
                 spdlog::info("EventManager: [{}] EARLY notification sent at {:.0f}ms "
                              "(first detection: {} @ {:.1f}%)",
                              camera_id, first_det_ms,
                              dets[0].class_name, dets[0].confidence * 100);
                 early_notification_sent = true;
-
-                // Save snapshot immediately for LLaVA (don't wait for recording to finish)
-                std::string snapshots_dir_early = config_.timeline.snapshots_dir;
-                early_snapshot_path = SnapshotWriter::save(
-                    *best_frame, best_detections, camera_id, snapshots_dir_early);
-
-                if (!early_snapshot_path.empty()) {
-                    spdlog::info("EventManager: [{}] early snapshot saved at {:.0f}ms: {}",
-                                 camera_id, first_det_ms,
-                                 std::filesystem::path(early_snapshot_path).filename().string());
-                }
 
                 // Launch LLaVA in parallel with recording (non-blocking)
                 if (config_.llava.enabled && !early_snapshot_path.empty()) {
@@ -456,6 +453,19 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                     auto first_det_ms = std::chrono::duration<double, std::milli>(
                         Clock::now() - start_time).count();
 
+                    // Save snapshot FIRST so we can include snapshot_url in the result
+                    std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                    early_snapshot_path = SnapshotWriter::save(
+                        *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                    std::string early_snap_filename;
+                    if (!early_snapshot_path.empty()) {
+                        early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
+                        spdlog::info("EventManager: [{}] early snapshot saved (post-roll) at {:.0f}ms: {}",
+                                     camera_id, first_det_ms, early_snap_filename);
+                    }
+
+                    // Build and publish result with snapshot_url
                     json early_dets = json::array();
                     for (const auto& d : dets) {
                         early_dets.push_back({
@@ -470,10 +480,10 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                         {"detections", early_dets},
                         {"detection_count", static_cast<int>(dets.size())},
                         {"detected_objects", dets[0].class_name},
-                        {"phase", "early"},
+                        {"snapshot_url", early_snap_filename.empty() ? json(nullptr)
+                            : json(base_url + "/snapshots/" + early_snap_filename)},
                     };
                     mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
-                    mqtt_->publish(prefix + "/" + camera_id + "/detected", "ON");
 
                     spdlog::info("EventManager: [{}] EARLY notification (post-roll) at {:.0f}ms "
                                  "(first detection: {} @ {:.1f}%)",
@@ -481,11 +491,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                                  dets[0].class_name, dets[0].confidence * 100);
                     early_notification_sent = true;
 
-                    // Save snapshot + launch LLaVA in parallel
-                    std::string snapshots_dir_early = config_.timeline.snapshots_dir;
-                    early_snapshot_path = SnapshotWriter::save(
-                        *best_frame, best_detections, camera_id, snapshots_dir_early);
-
+                    // Launch LLaVA in parallel
                     if (!early_snapshot_path.empty() && config_.llava.enabled) {
                         float det_conf = best_detections.front().confidence;
                         auto cam_conf_it2 = config_.cameras.find(camera_id);
@@ -534,6 +540,23 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     spdlog::info("EventManager: [{}] recording finalized ({:.0f}ms)",
                  camera_id,
                  std::chrono::duration<double, std::milli>(Clock::now() - t_finalize).count());
+
+    // Nothing detected — delete recording, skip snapshot/DB/LLaVA
+    if (all_detections.empty()) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - start_time);
+        // Remove the recording file — no detections means no value
+        if (!recorder.fileName().empty()) {
+            std::string rec_path = events_dir + "/" + recorder.fileName();
+            std::error_code ec;
+            if (std::filesystem::remove(rec_path, ec)) {
+                spdlog::info("EventManager: [{}] removed empty recording {}", camera_id, recorder.fileName());
+            }
+        }
+        spdlog::info("EventManager: event {} completed for {} ({:.1f}s, {} frames, 0 detections)",
+                     event_id, camera_id, elapsed.count() / 1000.0, recorder.framesWritten());
+        return;
+    }
 
     // 10. Save snapshot (best detection frame)
     //     If early snapshot was already saved, update only if we got a better detection
@@ -610,58 +633,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         snapshot_filename = std::filesystem::path(snapshot_path).filename().string();
     }
 
-    // 13. Publish final result to MQTT (with recording URL + full stats)
-    std::string base_url = "http://" + config_.api.host + ":" + std::to_string(config_.api.port);
-    if (config_.api.host == "0.0.0.0") {
-        base_url = "http://192.168.2.5:" + std::to_string(config_.api.port);
-    }
-
-    if (mqtt_) {
-        json result_msg = {
-            {"camera_id", camera_id},
-            {"timestamp", yolo::time_utils::now_iso8601()},
-            {"detections", dets_json},
-            {"detection_count", static_cast<int>(all_detections.size())},
-            {"unique_classes", unique_classes},
-            {"class_counts", class_counts},
-            {"detected_objects", detection_message},
-            {"detection_message", detection_message},
-            {"frames_processed", recorder.framesWritten()},
-            {"processing_time_seconds", std::round(duration_seconds * 100) / 100},
-            {"snapshot_url", snapshot_filename.empty() ? json(nullptr) : json(base_url + "/snapshots/" + snapshot_filename)},
-            {"recording_url", recorder.fileName().empty() ? json(nullptr) : json(base_url + "/events/" + recorder.fileName())},
-            {"recording_filename", recorder.fileName()},
-            {"phase", "final"},
-        };
-        mqtt_->publish(prefix + "/" + camera_id + "/result", result_msg.dump());
-
-        // Binary sensor for HA (early notification already sent ON if detections exist)
-        if (!early_notification_sent) {
-            mqtt_->publish(prefix + "/" + camera_id + "/detected",
-                           all_detections.empty() ? "OFF" : "ON");
-        }
-
-        // Detection completed status
-        json complete_msg = {
-            {"status", "completed"},
-            {"timestamp", yolo::time_utils::now_iso8601()},
-            {"camera_id", camera_id}
-        };
-        mqtt_->publish(prefix + "/" + camera_id + "/detection", complete_msg.dump());
-
-        spdlog::info("EventManager: [{}] final MQTT result published ({:.0f}ms after start, {} total inferences)",
-                     camera_id,
-                     std::chrono::duration<double, std::milli>(Clock::now() - start_time).count(),
-                     inference_count);
-    }
-
-    // 14. Reset binary sensor after a short delay
-    if (mqtt_ && !all_detections.empty()) {
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        mqtt_->publish(prefix + "/" + camera_id + "/detected", "OFF");
-    }
-
-    // 15. Log to database (non-blocking — catch exceptions to prevent hang)
+    // 13. Log to database (non-blocking — catch exceptions to prevent hang)
     try {
         if (db_) {
             yolo::EventLogger::create_event(*db_, event_id, camera_id,
