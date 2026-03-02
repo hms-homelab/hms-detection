@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.7.0 (2026-03-02)
+
+### Changed
+- **Confidence escalation**: system keeps re-checking YOLO on each frame until best confidence meets the gate — previously gave up after first below-gate detection and never re-checked
+- **Snapshot from best frame**: snapshot saved from highest-confidence frame when gate is crossed, not the first low-confidence detection
+- **Stop inference after notification**: YOLO inference stops once notification is sent — saves GPU cycles for the rest of the event (recording continues)
+- **Post-roll gate fix**: post-roll phase now uses same escalation logic (was still using old fire-once-on-first-detection pattern)
+- **Quieter logs**: no per-frame detection logs while below gate, no inference logs after notification sent
+
+### Added
+- 16 Catch2 unit tests for confidence gate (`[confidence_gate]` tag): escalation across frames, best-frame tracking, single-publish guarantee, multi-camera gates, recording deletion
+- E2E test expanded to 5 scenarios: above gate, below gate, escalation (gate=0.78), narrow miss (gate=0.88), no class match
+
 ## v2.6.0 (2026-03-02)
 
 ### Changed

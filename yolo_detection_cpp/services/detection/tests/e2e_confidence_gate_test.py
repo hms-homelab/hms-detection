@@ -6,13 +6,16 @@ Uses live hms-detection with front_door camera (reliably detects parked cars
 at ~86% confidence).
 
 Scenarios:
-  1. gate=0.70, car in classes → 86% > 70%  → result + context + recording
-  2. gate=1.00, car in classes → 86% < 100% → no result, no context, no recording
+  1. ABOVE GATE:   gate=0.70, car in classes → ~80% > 70%  → result + context + recording
+  2. BELOW GATE:   gate=1.00, car in classes → ~80% < 100% → no result, no context, no recording
+  3. ESCALATION:   gate=0.78, car in classes → ~80% > 78%  → result (proves re-check works)
+  4. NARROW MISS:  gate=0.88, car in classes → ~80% < 88%  → no result (gate above typical conf)
+  5. NO MATCH:     gate=0.70, no car class   → 0 dets      → no result, no recording, no snapshot
 
 Usage:
   sudo python3 e2e_confidence_gate_test.py
-  sudo python3 e2e_confidence_gate_test.py --high-only
-  sudo python3 e2e_confidence_gate_test.py --low-only
+  sudo python3 e2e_confidence_gate_test.py --scenario 1
+  sudo python3 e2e_confidence_gate_test.py --scenario 3,4
 """
 
 import argparse
@@ -101,7 +104,6 @@ def wait_for_health(timeout=30):
 
 def set_config(classes, gate):
     """Set front_door classes and gate, preserving YAML formatting."""
-    # Restore clean base first
     subprocess.run(["git", "checkout", "config.yaml"],
                    cwd="/opt/yolo_detection", check=True,
                    capture_output=True)
@@ -115,12 +117,10 @@ def set_config(classes, gate):
 
     for line in lines:
         stripped = line.rstrip("\n")
-        # Detect front_door section
         if stripped == "  front_door:":
             in_front_door = True
             new_lines.append(line)
             continue
-        # Detect end of front_door section (next top-level or camera key)
         if in_front_door and (line[0:1] not in (" ", "\n", "") or
                               (line.startswith("  ") and not line.startswith("    ") and line.strip() and line.strip()[0] != '#')):
             in_front_door = False
@@ -129,14 +129,13 @@ def set_config(classes, gate):
             new_lines.append(f"    classes: {classes_str}\n")
             new_lines.append(f"    immediate_notification_confidence: {gate}\n")
         elif in_front_door and "immediate_notification_confidence" in stripped:
-            pass  # skip existing gate line
+            pass
         else:
             new_lines.append(line)
 
     with open(CONFIG_SRC, "w") as f:
         f.writelines(new_lines)
 
-    # Fix ownership (script runs as root, service runs as aamat)
     import pwd
     uid = pwd.getpwnam(SERVICE_USER).pw_uid
     gid = pwd.getpwnam(SERVICE_USER).pw_gid
@@ -185,7 +184,6 @@ def run_scenario(name, classes, gate, expect_result, expect_context,
     collector.start()
     time.sleep(1)
 
-    # Mark start time for file age checks
     scenario_start = time.time()
 
     print(f"\n[2] Triggering {CAMERA_ID} motion event...")
@@ -221,8 +219,11 @@ def run_scenario(name, classes, gate, expect_result, expect_context,
     if results:
         confs = [d.get("confidence", 0) for d in results[0].get("detections", [])]
         print(f"    Detected: {results[0].get('detected_objects')}, confs={confs}")
+        # Verify snapshot_url is present when result is published
+        snap_url = results[0].get("snapshot_url")
+        print(f"    snapshot_url in result: {snap_url}")
     if contexts:
-        print(f"    Context: {contexts[0].get('context', '')}")
+        print(f"    Context: {contexts[0].get('context', '')[:100]}...")
 
     print(f"\n[4] Assertions:")
     check("/result published", len(results) > 0, expect_result)
@@ -230,43 +231,110 @@ def run_scenario(name, classes, gate, expect_result, expect_context,
     check("Recording exists", len(recordings) > 0, expect_recording)
     check("Snapshot exists", len(snapshots) > 0, expect_snapshot)
 
+    # Extra assertion: if result was published, snapshot_url must be non-null
+    if expect_result and results:
+        snap_url = results[0].get("snapshot_url")
+        snap_ok = snap_url is not None and "snapshots/" in snap_url
+        if not snap_ok:
+            passed = False
+        print(f"  [{'PASS' if snap_ok else 'FAIL'}] snapshot_url in result: {snap_url}")
+
+    # Extra assertion: result should only be published once per event
+    if results:
+        result_ok = len(results) == 1
+        if not result_ok:
+            passed = False
+        print(f"  [{'PASS' if result_ok else 'FAIL'}] Single result message: count={len(results)}")
+
     return passed
 
 
+# ============================================================================
+# Scenario definitions
+# ============================================================================
+
+SCENARIOS = {
+    1: {
+        "name": "ABOVE GATE: car ~86%, gate=0.70 -> result + context + recording",
+        "classes": ["person", "dog", "package", "car"],
+        "gate": 0.70,
+        "expect_result": True,
+        "expect_context": True,
+        "expect_recording": True,
+        "expect_snapshot": True,
+    },
+    2: {
+        "name": "BELOW GATE: car ~86%, gate=1.00 -> no result/context/recording, snapshot kept",
+        "classes": ["person", "dog", "package", "car"],
+        "gate": 1.00,
+        "expect_result": False,
+        "expect_context": False,
+        "expect_recording": False,
+        "expect_snapshot": True,
+    },
+    3: {
+        "name": "ESCALATION: car ~80%, gate=0.78 -> result (proves re-check across frames)",
+        "classes": ["person", "dog", "package", "car"],
+        "gate": 0.78,
+        "expect_result": True,
+        "expect_context": True,
+        "expect_recording": True,
+        "expect_snapshot": True,
+    },
+    4: {
+        "name": "NARROW MISS: car ~80%, gate=0.88 -> no result (gate above typical conf)",
+        "classes": ["person", "dog", "package", "car"],
+        "gate": 0.88,
+        "expect_result": False,
+        "expect_context": False,
+        "expect_recording": False,
+        "expect_snapshot": True,
+    },
+    5: {
+        "name": "NO MATCH: no car in classes, gate=0.70 -> 0 detections, nothing saved",
+        "classes": ["person", "dog", "package"],
+        "gate": 0.70,
+        "expect_result": False,
+        "expect_context": False,
+        "expect_recording": False,
+        "expect_snapshot": False,
+    },
+}
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--high-only", action="store_true")
-    parser.add_argument("--low-only", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="E2E confidence gate test using front_door camera + parked cars")
+    parser.add_argument("--scenario", type=str, default=None,
+                        help="Comma-separated scenario numbers to run (e.g. '1,3,4')")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
         print("ERROR: Run with sudo")
         sys.exit(1)
 
+    # Determine which scenarios to run
+    if args.scenario:
+        scenario_ids = [int(s.strip()) for s in args.scenario.split(",")]
+    else:
+        scenario_ids = sorted(SCENARIOS.keys())
+
     all_passed = True
 
     try:
-        if not args.low_only:
+        for sid in scenario_ids:
+            if sid not in SCENARIOS:
+                print(f"ERROR: Unknown scenario {sid}")
+                sys.exit(1)
+            s = SCENARIOS[sid]
             ok = run_scenario(
-                name="HIGH: car ~86%, gate=0.70 -> result + context + recording",
-                classes=["person", "dog", "package", "car"],
-                gate=0.70,
-                expect_result=True,
-                expect_context=True,
-                expect_recording=True,
-                expect_snapshot=True,
-            )
-            all_passed = all_passed and ok
-
-        if not args.high_only:
-            ok = run_scenario(
-                name="LOW: car ~86%, gate=1.00 -> no result, no context, no recording, snapshot kept",
-                classes=["person", "dog", "package", "car"],
-                gate=1.00,
-                expect_result=False,
-                expect_context=False,
-                expect_recording=False,
-                expect_snapshot=True,
+                name=s["name"],
+                classes=s["classes"],
+                gate=s["gate"],
+                expect_result=s["expect_result"],
+                expect_context=s["expect_context"],
+                expect_recording=s["expect_recording"],
+                expect_snapshot=s["expect_snapshot"],
             )
             all_passed = all_passed and ok
 

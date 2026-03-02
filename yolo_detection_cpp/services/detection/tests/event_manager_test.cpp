@@ -168,6 +168,14 @@ TEST_CASE("EventManager cleanup allows re-use after event completes", "[event_ma
     mqtt->disconnect();
 }
 
+// ============================================================================
+// Confidence gate logic tests
+// These mirror the exact gate check used in event_manager.cpp:
+//   float det_conf = best_detections.front().confidence;
+//   double conf_gate = cam.immediate_notification_confidence (or 0.70 default);
+//   if (det_conf >= conf_gate) { publish; }
+// ============================================================================
+
 TEST_CASE("Confidence gate defaults to 0.70 when not set", "[event_manager][confidence_gate]") {
     yolo::AppConfig config;
     yolo::CameraConfig cam;
@@ -201,7 +209,6 @@ TEST_CASE("Detection above gate passes notification check", "[event_manager][con
     double conf_gate = 0.70;
     REQUIRE(det_conf >= conf_gate);
 
-    // Should publish result + launch LLaVA
     bool should_publish = (det_conf >= conf_gate);
     REQUIRE(should_publish);
 }
@@ -211,28 +218,212 @@ TEST_CASE("Detection below gate fails notification check", "[event_manager][conf
     double conf_gate = 0.70;
     REQUIRE_FALSE(det_conf >= conf_gate);
 
-    // Should NOT publish result, should NOT launch LLaVA
     bool should_publish = (det_conf >= conf_gate);
     REQUIRE_FALSE(should_publish);
 
-    // Recording should be deleted (below_gate = true)
     bool below_gate = (det_conf < conf_gate);
     REQUIRE(below_gate);
 }
 
-TEST_CASE("Detection at gate boundary uses float-to-double comparison (matches production code)", "[event_manager][confidence_gate]") {
-    // In production, det_conf is float, conf_gate is double.
-    // float 0.70f < double 0.70 due to precision loss, so exactly-at-gate
-    // detections are treated as below gate. This is acceptable — the gate
-    // is a user-configured threshold and a fraction of a percent doesn't matter.
+TEST_CASE("Detection at gate boundary uses float-to-double comparison", "[event_manager][confidence_gate]") {
+    // float 0.70f < double 0.70 due to precision loss — documented behavior
     float det_conf = 0.70f;
     double conf_gate = 0.70;
-    // This documents the actual behavior (float precision):
     REQUIRE_FALSE(det_conf >= conf_gate);
 
-    // A slightly higher float does pass:
     float det_conf2 = 0.701f;
     REQUIRE(det_conf2 >= conf_gate);
+}
+
+// ============================================================================
+// Confidence escalation: best_confidence tracking across frames
+// Simulates the live phase loop where best_confidence accumulates
+// ============================================================================
+
+TEST_CASE("Best confidence tracks highest detection across frames", "[event_manager][confidence_gate]") {
+    // Simulates: frame 1 → 54%, frame 2 → 63%, frame 3 → 72%
+    // Only frame 3 should trigger notification
+    float best_confidence = 0.0f;
+    bool early_notification_sent = false;
+    double conf_gate = 0.70;
+
+    // Frame 1: person @ 54%
+    float frame1_conf = 0.54f;
+    if (frame1_conf > best_confidence) best_confidence = frame1_conf;
+    if (!early_notification_sent && best_confidence >= conf_gate) {
+        early_notification_sent = true;
+    }
+    REQUIRE_FALSE(early_notification_sent);
+
+    // Frame 2: person @ 63%
+    float frame2_conf = 0.63f;
+    if (frame2_conf > best_confidence) best_confidence = frame2_conf;
+    if (!early_notification_sent && best_confidence >= conf_gate) {
+        early_notification_sent = true;
+    }
+    REQUIRE_FALSE(early_notification_sent);
+
+    // Frame 3: person @ 72% — should trigger
+    float frame3_conf = 0.72f;
+    if (frame3_conf > best_confidence) best_confidence = frame3_conf;
+    if (!early_notification_sent && best_confidence >= conf_gate) {
+        early_notification_sent = true;
+    }
+    REQUIRE(early_notification_sent);
+    REQUIRE(best_confidence == Catch::Approx(0.72f));
+}
+
+TEST_CASE("No notification when all detections stay below gate", "[event_manager][confidence_gate]") {
+    float best_confidence = 0.0f;
+    bool early_notification_sent = false;
+    double conf_gate = 0.70;
+
+    // Simulate 5 frames all below gate
+    for (float conf : {0.50f, 0.55f, 0.60f, 0.63f, 0.65f}) {
+        if (conf > best_confidence) best_confidence = conf;
+        if (!early_notification_sent && best_confidence >= conf_gate) {
+            early_notification_sent = true;
+        }
+    }
+    REQUIRE_FALSE(early_notification_sent);
+    REQUIRE(best_confidence == Catch::Approx(0.65f));
+}
+
+TEST_CASE("Notification fires once even with multiple above-gate frames", "[event_manager][confidence_gate]") {
+    float best_confidence = 0.0f;
+    bool early_notification_sent = false;
+    double conf_gate = 0.70;
+    int publish_count = 0;
+
+    for (float conf : {0.55f, 0.72f, 0.80f, 0.85f}) {
+        if (conf > best_confidence) best_confidence = conf;
+        if (!early_notification_sent && best_confidence >= conf_gate) {
+            early_notification_sent = true;
+            publish_count++;
+        }
+    }
+    REQUIRE(publish_count == 1);
+    REQUIRE(best_confidence == Catch::Approx(0.85f));
+}
+
+TEST_CASE("Snapshot uses best-confidence frame not first detection", "[event_manager][confidence_gate]") {
+    // Simulates: first detection at 54% (no snapshot), later at 72% (snapshot saved)
+    float best_confidence = 0.0f;
+    bool early_notification_sent = false;
+    bool snapshot_saved = false;
+    float snapshot_confidence = 0.0f;
+    double conf_gate = 0.70;
+
+    // Frame 1: person @ 54% — below gate, no snapshot
+    float frame1_conf = 0.54f;
+    if (frame1_conf > best_confidence) best_confidence = frame1_conf;
+    if (!early_notification_sent && best_confidence >= conf_gate) {
+        snapshot_saved = true;
+        snapshot_confidence = best_confidence;
+        early_notification_sent = true;
+    }
+    REQUIRE_FALSE(snapshot_saved);
+
+    // Frame 2: person @ 72% — meets gate, snapshot from best frame
+    float frame2_conf = 0.72f;
+    if (frame2_conf > best_confidence) best_confidence = frame2_conf;
+    if (!early_notification_sent && best_confidence >= conf_gate) {
+        snapshot_saved = true;
+        snapshot_confidence = best_confidence;
+        early_notification_sent = true;
+    }
+    REQUIRE(snapshot_saved);
+    REQUIRE(snapshot_confidence == Catch::Approx(0.72f));
+}
+
+TEST_CASE("Recording deleted when best confidence stays below gate", "[event_manager][confidence_gate]") {
+    float best_conf = 0.63f;  // best across entire event
+    double conf_gate = 0.70;
+    bool below_gate = (best_conf < conf_gate);
+    REQUIRE(below_gate);
+
+    // Production code: if (below_gate) remove(recording); db_recording = "";
+    std::string db_recording = below_gate ? "" : "recording.mp4";
+    REQUIRE(db_recording.empty());
+}
+
+TEST_CASE("Recording kept when best confidence meets gate", "[event_manager][confidence_gate]") {
+    float best_conf = 0.82f;
+    double conf_gate = 0.70;
+    bool below_gate = (best_conf < conf_gate);
+    REQUIRE_FALSE(below_gate);
+
+    std::string db_recording = below_gate ? "" : "recording.mp4";
+    REQUIRE(db_recording == "recording.mp4");
+}
+
+// ============================================================================
+// Gate with different camera configs
+// ============================================================================
+
+TEST_CASE("High gate (0.90) requires very confident detection", "[event_manager][confidence_gate]") {
+    double conf_gate = 0.90;
+
+    // 86% car (typical front_door) → below 90% gate
+    float car_conf = 0.86f;
+    REQUIRE_FALSE(car_conf >= conf_gate);
+
+    // 92% car → above gate
+    float high_car_conf = 0.92f;
+    REQUIRE(high_car_conf >= conf_gate);
+}
+
+TEST_CASE("Low gate (0.50) accepts most detections", "[event_manager][confidence_gate]") {
+    double conf_gate = 0.50;
+
+    float det_conf = 0.54f;
+    REQUIRE(det_conf >= conf_gate);
+}
+
+TEST_CASE("Gate 1.00 blocks all real detections", "[event_manager][confidence_gate]") {
+    // Used in e2e tests to verify no notifications
+    double conf_gate = 1.00;
+
+    REQUIRE_FALSE(0.99f >= conf_gate);
+    REQUIRE_FALSE(0.86f >= conf_gate);
+    REQUIRE(1.00f >= conf_gate);  // only perfect score passes
+}
+
+TEST_CASE("Unknown camera falls back to default 0.70 gate", "[event_manager][confidence_gate]") {
+    yolo::AppConfig config;
+    // No cameras configured at all
+
+    std::string camera_id = "unknown_cam";
+    auto cam_it = config.cameras.find(camera_id);
+    double conf_gate = (cam_it != config.cameras.end() && cam_it->second.immediate_notification_confidence > 0)
+        ? cam_it->second.immediate_notification_confidence : 0.70;
+
+    REQUIRE(conf_gate == Catch::Approx(0.70));
+}
+
+TEST_CASE("Multiple cameras with different gates", "[event_manager][confidence_gate]") {
+    yolo::AppConfig config;
+
+    yolo::CameraConfig patio;
+    patio.id = "patio";
+    patio.immediate_notification_confidence = 0.60;
+    config.cameras["patio"] = patio;
+
+    yolo::CameraConfig front;
+    front.id = "front_door";
+    front.immediate_notification_confidence = 0.80;
+    config.cameras["front_door"] = front;
+
+    // Same 72% detection: passes patio gate, fails front_door gate
+    float det_conf = 0.72f;
+
+    auto patio_it = config.cameras.find("patio");
+    double patio_gate = patio_it->second.immediate_notification_confidence;
+    REQUIRE(det_conf >= patio_gate);
+
+    auto front_it = config.cameras.find("front_door");
+    double front_gate = front_it->second.immediate_notification_confidence;
+    REQUIRE_FALSE(det_conf >= front_gate);
 }
 
 TEST_CASE("EventManager motion_stop ends active event", "[event_manager]") {

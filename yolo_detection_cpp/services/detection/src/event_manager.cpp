@@ -313,8 +313,9 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         recorder.writeFrame(*frame);
         frames_since_detection++;
 
-        // Sample detection
-        if (engine && engine->isLoaded() && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
+        // Sample detection — skip once notification sent (no need to keep inferring)
+        if (!early_notification_sent && engine && engine->isLoaded()
+            && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
             frames_since_detection = 0;
             auto t_inf = Clock::now();
             auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
@@ -336,30 +337,30 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             }
 
             // Early notification: save snapshot + publish result + launch LLaVA
-            // all immediately on first confident detection
-            if (!dets.empty() && !early_notification_sent && mqtt_) {
-                auto first_det_ms = std::chrono::duration<double, std::milli>(
-                    Clock::now() - start_time).count();
-
-                // Save snapshot FIRST so we can include snapshot_url in the result
-                std::string snapshots_dir_early = config_.timeline.snapshots_dir;
-                early_snapshot_path = SnapshotWriter::save(
-                    *best_frame, best_detections, camera_id, snapshots_dir_early);
-
-                std::string early_snap_filename;
-                if (!early_snapshot_path.empty()) {
-                    early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
-                    spdlog::info("EventManager: [{}] early snapshot saved at {:.0f}ms: {}",
-                                 camera_id, first_det_ms, early_snap_filename);
-                }
-
-                // Only publish result MQTT if confidence meets notification gate
+            // Only fires when best confidence so far meets the notification gate.
+            // Keeps re-checking on each detection frame until gate is met.
+            if (!dets.empty() && mqtt_) {
                 float det_conf = best_detections.front().confidence;
                 auto cam_conf_it2 = config_.cameras.find(camera_id);
                 double conf_gate = (cam_conf_it2 != config_.cameras.end())
                     ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
 
                 if (det_conf >= conf_gate) {
+                    auto first_det_ms = std::chrono::duration<double, std::milli>(
+                        Clock::now() - start_time).count();
+
+                    // Save snapshot from best-confidence frame
+                    std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                    early_snapshot_path = SnapshotWriter::save(
+                        *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                    std::string early_snap_filename;
+                    if (!early_snapshot_path.empty()) {
+                        early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
+                        spdlog::info("EventManager: [{}] snapshot saved at {:.0f}ms: {}",
+                                     camera_id, first_det_ms, early_snap_filename);
+                    }
+
                     json early_dets = json::array();
                     for (const auto& d : dets) {
                         early_dets.push_back({
@@ -379,22 +380,15 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                     };
                     mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
 
-                    spdlog::info("EventManager: [{}] EARLY notification sent at {:.0f}ms "
-                                 "(first detection: {} @ {:.1f}%)",
+                    spdlog::info("EventManager: [{}] EARLY notification at {:.0f}ms "
+                                 "({} @ {:.1f}%)",
                                  camera_id, first_det_ms,
-                                 dets[0].class_name, dets[0].confidence * 100);
-                } else {
-                    spdlog::info("EventManager: [{}] detection at {:.0f}ms ({} @ {:.1f}%) "
-                                 "below notification gate ({:.0f}%), skipping result MQTT",
-                                 camera_id, first_det_ms,
-                                 dets[0].class_name, dets[0].confidence * 100, conf_gate * 100);
-                }
-                early_notification_sent = true;
+                                 best_detections.front().class_name, det_conf * 100);
 
-                // Launch LLaVA in parallel with recording (non-blocking)
-                if (config_.llava.enabled && !early_snapshot_path.empty()) {
+                    early_notification_sent = true;
 
-                    if (det_conf >= conf_gate) {
+                    // Launch LLaVA in parallel with recording (non-blocking)
+                    if (config_.llava.enabled && !early_snapshot_path.empty()) {
                         std::vector<std::string> early_classes;
                         for (const auto& d : dets) {
                             early_classes.push_back(d.class_name);
@@ -438,9 +432,10 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         if (frame && frame->width == width) {
             recorder.writeFrame(*frame);
 
-            // Continue detection sampling during post-roll
+            // Continue detection sampling during post-roll (skip if already notified)
             frames_since_detection++;
-            if (engine && engine->isLoaded() && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
+            if (!early_notification_sent && engine && engine->isLoaded()
+                && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
                 frames_since_detection = 0;
                 auto t_inf = Clock::now();
                 auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
@@ -456,30 +451,29 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                     }
                 }
 
-                // Send early notification if first detection happens during post-roll
+                // Send notification if best detection during post-roll meets gate
                 if (!dets.empty() && !early_notification_sent && mqtt_) {
-                    auto first_det_ms = std::chrono::duration<double, std::milli>(
-                        Clock::now() - start_time).count();
-
-                    // Save snapshot FIRST so we can include snapshot_url in the result
-                    std::string snapshots_dir_early = config_.timeline.snapshots_dir;
-                    early_snapshot_path = SnapshotWriter::save(
-                        *best_frame, best_detections, camera_id, snapshots_dir_early);
-
-                    std::string early_snap_filename;
-                    if (!early_snapshot_path.empty()) {
-                        early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
-                        spdlog::info("EventManager: [{}] early snapshot saved (post-roll) at {:.0f}ms: {}",
-                                     camera_id, first_det_ms, early_snap_filename);
-                    }
-
-                    // Only publish result MQTT if confidence meets notification gate
                     float det_conf = best_detections.front().confidence;
                     auto cam_conf_it2 = config_.cameras.find(camera_id);
                     double conf_gate = (cam_conf_it2 != config_.cameras.end())
                         ? cam_conf_it2->second.immediate_notification_confidence : 0.70;
 
                     if (det_conf >= conf_gate) {
+                        auto first_det_ms = std::chrono::duration<double, std::milli>(
+                            Clock::now() - start_time).count();
+
+                        // Save snapshot from best-confidence frame
+                        std::string snapshots_dir_early = config_.timeline.snapshots_dir;
+                        early_snapshot_path = SnapshotWriter::save(
+                            *best_frame, best_detections, camera_id, snapshots_dir_early);
+
+                        std::string early_snap_filename;
+                        if (!early_snapshot_path.empty()) {
+                            early_snap_filename = std::filesystem::path(early_snapshot_path).filename().string();
+                            spdlog::info("EventManager: [{}] snapshot saved (post-roll) at {:.0f}ms: {}",
+                                         camera_id, first_det_ms, early_snap_filename);
+                        }
+
                         json early_dets = json::array();
                         for (const auto& d : dets) {
                             early_dets.push_back({
@@ -500,21 +494,14 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                         mqtt_->publish(prefix + "/" + camera_id + "/result", early_msg.dump());
 
                         spdlog::info("EventManager: [{}] EARLY notification (post-roll) at {:.0f}ms "
-                                     "(first detection: {} @ {:.1f}%)",
+                                     "({} @ {:.1f}%)",
                                      camera_id, first_det_ms,
-                                     dets[0].class_name, dets[0].confidence * 100);
-                    } else {
-                        spdlog::info("EventManager: [{}] detection (post-roll) at {:.0f}ms ({} @ {:.1f}%) "
-                                     "below notification gate ({:.0f}%), skipping result MQTT",
-                                     camera_id, first_det_ms,
-                                     dets[0].class_name, dets[0].confidence * 100, conf_gate * 100);
-                    }
-                    early_notification_sent = true;
+                                     best_detections.front().class_name, det_conf * 100);
 
-                    // Launch LLaVA in parallel
-                    if (!early_snapshot_path.empty() && config_.llava.enabled) {
+                        early_notification_sent = true;
 
-                        if (det_conf >= conf_gate) {
+                        // Launch LLaVA in parallel
+                        if (!early_snapshot_path.empty() && config_.llava.enabled) {
                             std::vector<std::string> early_classes;
                             for (const auto& d : dets) {
                                 early_classes.push_back(d.class_name);
@@ -535,7 +522,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                                 }
                             });
 
-                            spdlog::info("EventManager: [{}] LLaVA launched in parallel (post-roll) at {:.0f}ms",
+                            spdlog::info("EventManager: [{}] LLaVA launched (post-roll) at {:.0f}ms",
                                          camera_id, first_det_ms);
                         }
                     }
