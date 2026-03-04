@@ -79,9 +79,12 @@ bool EventRecorder::start(const std::string& camera_id,
     enc_ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
     enc_ctx_->gop_size = fps_;  // keyframe every second
 
-    // Ultrafast preset, CRF 28 (good quality/size tradeoff)
+    // Ultrafast preset, CRF 28 with max bitrate cap
+    // Cap at 1000 kbps so 30s recordings stay under ~4MB (HA ingress limit)
     av_opt_set(enc_ctx_->priv_data, "preset", "ultrafast", 0);
     av_opt_set(enc_ctx_->priv_data, "crf", "28", 0);
+    enc_ctx_->rc_max_rate = 1000 * 1000;   // 1000 kbps max
+    enc_ctx_->rc_buffer_size = 2000 * 1000; // 2000 kbit buffer
 
     // For MP4 container compatibility
     if (fmt_ctx_->oformat->flags & AVFMT_GLOBALHEADER) {

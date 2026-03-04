@@ -35,6 +35,8 @@ add_executable(hms_detection
     src/snapshot_writer.cpp
     src/event_manager.cpp
     src/vision_client.cpp
+    src/embedding_client.cpp
+    src/periodic_snapshot_manager.cpp
     src/controllers/health_controller.cpp
     src/controllers/detection_controller.cpp
 )
@@ -64,6 +66,7 @@ if(BUILD_TESTS)
         tests/detection_engine_test.cpp
         tests/vision_client_test.cpp
         tests/event_manager_test.cpp
+        tests/embedding_client_test.cpp
         src/rtsp_capture.cpp
         src/buffer_service.cpp
         src/detection_engine.cpp
@@ -72,6 +75,8 @@ if(BUILD_TESTS)
         src/snapshot_writer.cpp
         src/event_manager.cpp
         src/vision_client.cpp
+        src/embedding_client.cpp
+        src/periodic_snapshot_manager.cpp
     )
 
     target_include_directories(detection_tests PRIVATE

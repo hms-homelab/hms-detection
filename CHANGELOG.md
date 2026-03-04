@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.8.0 (2026-03-04)
+
+### Fixed
+- **MIME type for video files**: Drogon's `newFileResponse()` served `.mp4` files as `application/octet-stream` — browsers refused to play video without correct `video/mp4` content-type. Added `getMimeType()` helper for `/events/` and `/snapshots/` routes.
+- **Recording bitrate cap**: added `maxrate=1000k` / `bufsize=2000k` to H.264 encoder so 30s recordings stay under ~4MB (HA ingress proxy size limit). Patio recordings were 5-6MB at CRF 28 with no cap.
+
+### Added
+- **Periodic snapshot manager**: ambient scene snapshots every 5 minutes per camera, saved to DB with optional LLaVA descriptions
+- **Embedding client**: vector embedding support for AI context text
+
 ## v2.7.1 (2026-03-04)
 
 ### Fixed

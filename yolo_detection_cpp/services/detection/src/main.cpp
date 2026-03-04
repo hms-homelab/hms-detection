@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <csignal>
 #include <atomic>
+#include <algorithm>
+#include <unordered_map>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -17,6 +19,7 @@ extern "C" {
 #include "mqtt_client.h"
 #include "db_pool.h"
 #include "event_manager.h"
+#include "periodic_snapshot_manager.h"
 #include "controllers/health_controller.h"
 #include "controllers/detection_controller.h"
 
@@ -28,10 +31,14 @@ std::atomic<bool> g_shutdown{false};
 std::shared_ptr<hms::BufferService> g_buffer_service;
 std::shared_ptr<hms::EventManager> g_event_manager;
 std::shared_ptr<yolo::MqttClient> g_mqtt;
+std::unique_ptr<hms::PeriodicSnapshotManager> g_periodic_mgr;
 
 void signal_handler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
     g_shutdown = true;
+    if (g_periodic_mgr) {
+        g_periodic_mgr->stop();
+    }
     if (g_event_manager) {
         g_event_manager->stop();
     }
@@ -161,6 +168,13 @@ int main(int argc, char* argv[]) {
             g_buffer_service, g_mqtt, db, config);
         g_event_manager->start();
 
+        // --- Periodic Snapshot Manager (ambient scene snapshots) ---
+        if (db) {
+            g_periodic_mgr = std::make_unique<hms::PeriodicSnapshotManager>(
+                g_buffer_service, db, config);
+            g_periodic_mgr->start();
+        }
+
         // Configure Drogon
         auto& app = drogon::app();
         app.setLogLevel(trantor::Logger::kWarn);
@@ -180,13 +194,27 @@ int main(int argc, char* argv[]) {
             }
         );
 
+        // MIME type lookup for static file serving
+        auto getMimeType = [](const std::string& filename) -> std::string {
+            static const std::unordered_map<std::string, std::string> types = {
+                {".mp4","video/mp4"},{".webm","video/webm"},{".mkv","video/x-matroska"},
+                {".mov","video/quicktime"},{".avi","video/x-msvideo"},
+                {".jpg","image/jpeg"},{".jpeg","image/jpeg"},{".png","image/png"},
+                {".gif","image/gif"},{".webp","image/webp"},
+            };
+            auto ext = std::filesystem::path(filename).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            auto it = types.find(ext);
+            return it != types.end() ? it->second : "application/octet-stream";
+        };
+
         // Static file serving for snapshots and events
         auto snapshots_dir = config.timeline.snapshots_dir;
         auto events_dir = config.timeline.events_dir;
 
         app.registerHandler(
             "/snapshots/{filename}",
-            [snapshots_dir](const drogon::HttpRequestPtr& /*req*/,
+            [snapshots_dir, &getMimeType](const drogon::HttpRequestPtr& /*req*/,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& filename) {
                 // Prevent path traversal
@@ -198,13 +226,14 @@ int main(int argc, char* argv[]) {
                 }
                 auto path = snapshots_dir + "/" + filename;
                 auto resp = drogon::HttpResponse::newFileResponse(path);
+                resp->setContentTypeString(getMimeType(filename));
                 callback(resp);
             },
             {drogon::Get});
 
         app.registerHandler(
             "/events/{filename}",
-            [events_dir](const drogon::HttpRequestPtr& /*req*/,
+            [events_dir, &getMimeType](const drogon::HttpRequestPtr& /*req*/,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& filename) {
                 if (filename.find("..") != std::string::npos || filename.find('/') != std::string::npos) {
@@ -215,6 +244,7 @@ int main(int argc, char* argv[]) {
                 }
                 auto path = events_dir + "/" + filename;
                 auto resp = drogon::HttpResponse::newFileResponse(path);
+                resp->setContentTypeString(getMimeType(filename));
                 callback(resp);
             },
             {drogon::Get});
@@ -226,6 +256,7 @@ int main(int argc, char* argv[]) {
 
         // Cleanup
         spdlog::info("Shutting down...");
+        if (g_periodic_mgr) g_periodic_mgr->stop();
         if (g_event_manager) g_event_manager->stop();
         g_buffer_service->stopDetection();
         g_buffer_service->stopAll();
@@ -236,6 +267,7 @@ int main(int argc, char* argv[]) {
             g_mqtt->disconnect();
         }
 
+        g_periodic_mgr.reset();
         g_event_manager.reset();
         g_mqtt.reset();
         g_buffer_service.reset();
