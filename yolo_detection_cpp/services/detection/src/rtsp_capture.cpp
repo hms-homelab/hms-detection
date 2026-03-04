@@ -64,7 +64,18 @@ bool RtspCapture::openStream() {
     fmt_ctx_->interrupt_callback.opaque = this;
     fmt_ctx_->interrupt_callback.callback = [](void* opaque) -> int {
         auto* self = static_cast<RtspCapture*>(opaque);
-        return self->running_.load() ? 0 : 1;  // Return 1 to abort if stopping
+        if (!self->running_.load()) return 1;  // Abort if stopping
+
+        // Force-abort if stream is stalled (no frames for kStaleStreamTimeoutSec)
+        auto last = self->last_activity_time_.load();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            Clock::now() - last).count();
+        if (last != Clock::time_point{} && elapsed > kStaleStreamTimeoutSec) {
+            spdlog::warn("[{}] Stream stale ({}s without frames), forcing reconnect",
+                         self->camera_id_, elapsed);
+            return 1;
+        }
+        return 0;
     };
 
     int ret = avformat_open_input(&fmt_ctx_, rtsp_url_.c_str(), nullptr, &opts);
@@ -122,6 +133,9 @@ bool RtspCapture::openStream() {
     av_frame_ = av_frame_alloc();
     bgr_frame_ = av_frame_alloc();
     packet_ = av_packet_alloc();
+
+    // Mark activity so stale-stream timeout starts from now
+    last_activity_time_ = Clock::now();
 
     spdlog::info("[{}] Connected: {}x{} ({})", camera_id_,
                  codec_ctx_->width, codec_ctx_->height,
@@ -260,6 +274,7 @@ void RtspCapture::captureLoop() {
 
             ++frames_captured_;
             last_frame_time_ = Clock::now();
+            last_activity_time_ = Clock::now();
 
             // Deliver to buffer
             on_frame_(std::move(frame));

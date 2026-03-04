@@ -76,6 +76,10 @@ private:
     std::atomic<Clock::time_point> last_frame_time_{};
     std::atomic<int> frame_width_{0};
     std::atomic<int> frame_height_{0};
+
+    // Stale-stream detection: set when stream opens or frame arrives
+    std::atomic<Clock::time_point> last_activity_time_{};
+    static constexpr int kStaleStreamTimeoutSec = 30;
 };
 
 }  // namespace hms

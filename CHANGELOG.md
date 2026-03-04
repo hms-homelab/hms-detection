@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.7.1 (2026-03-04)
+
+### Fixed
+- **Stale RTSP stream detection**: cameras that kept TCP alive but stopped sending video data caused `av_read_frame()` to block indefinitely — live view would freeze for hours with no reconnect
+- Added 30-second stale-stream timeout to FFmpeg interrupt callback; forces reconnect when no frames arrive within the window
+
 ## v2.7.0 (2026-03-02)
 
 ### Changed
