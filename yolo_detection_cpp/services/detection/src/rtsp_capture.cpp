@@ -78,6 +78,10 @@ bool RtspCapture::openStream() {
         return 0;
     };
 
+    // Reset activity time BEFORE opening so the stale-stream callback
+    // doesn't immediately abort the new connection attempt.
+    last_activity_time_ = Clock::now();
+
     int ret = avformat_open_input(&fmt_ctx_, rtsp_url_.c_str(), nullptr, &opts);
     av_dict_free(&opts);
     if (ret < 0) {

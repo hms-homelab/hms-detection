@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.8.1 (2026-03-06)
+
+### Fixed
+- **RTSP reconnection deadlock**: once a stream went stale (30s without frames), every subsequent reconnect was immediately aborted by the interrupt callback — `last_activity_time_` still held the old stale timestamp during `avformat_open_input()`, so the callback saw `elapsed > 30s` and returned "Immediate exit requested". Fix: reset `last_activity_time_` before opening the new connection, not only after.
+
 ## v2.8.0 (2026-03-04)
 
 ### Fixed
