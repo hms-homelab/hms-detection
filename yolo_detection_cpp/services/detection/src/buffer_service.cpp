@@ -71,14 +71,15 @@ void BufferService::loadDetectionModel() {
         return;
     }
 
+    // Constructor validates model (loads + unloads), GPU stays free until motion events
     detection_engine_ = std::make_shared<DetectionEngine>(model_path, 80, config_.detection.gpu_enabled);
-    if (!detection_engine_->isLoaded()) {
-        spdlog::error("Failed to load detection model, detection disabled");
+    if (!detection_engine_->isModelValid()) {
+        spdlog::error("Failed to validate detection model, detection disabled");
         detection_engine_.reset();
         return;
     }
 
-    spdlog::info("Detection model loaded: '{}'", model_path);
+    spdlog::info("Detection model validated: '{}' (GPU idle until motion event)", model_path);
 }
 
 void BufferService::startDetection() {

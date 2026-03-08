@@ -28,15 +28,29 @@ static const char* COCO_NAMES[] = {
 
 DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes, bool gpu_enabled)
     : env_(ORT_LOGGING_LEVEL_WARNING, "hms-detection")
+    , model_path_(model_path)
+    , gpu_enabled_(gpu_enabled)
     , num_classes_(num_classes)
 {
     initClassNames();
+
+    // Validate model by loading once, then immediately unload to free GPU
+    load();
+    if (session_) {
+        model_valid_ = true;
+        unload();
+    }
+}
+
+void DetectionEngine::load() {
+    std::lock_guard lock(session_mutex_);
+    if (session_) return;  // already loaded
 
     Ort::SessionOptions session_options;
     session_options.SetIntraOpNumThreads(2);
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-    if (gpu_enabled) {
+    if (gpu_enabled_) {
         OrtCUDAProviderOptions cuda_options{};
         cuda_options.device_id = 0;
         try {
@@ -48,9 +62,14 @@ DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes,
     }
 
     try {
-        session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), session_options);
+        session_ = std::make_unique<Ort::Session>(env_, model_path_.c_str(), session_options);
 
         // Cache input/output names
+        input_names_str_.clear();
+        output_names_str_.clear();
+        input_names_.clear();
+        output_names_.clear();
+
         size_t num_inputs = session_->GetInputCount();
         for (size_t i = 0; i < num_inputs; ++i) {
             auto name = session_->GetInputNameAllocated(i, allocator_);
@@ -76,13 +95,26 @@ DetectionEngine::DetectionEngine(const std::string& model_path, int num_classes,
             input_width_ = static_cast<int>(input_shape[3]);
         }
 
-        spdlog::info("ONNX model loaded: {} (input {}x{}, {} classes)",
-                      model_path, input_width_, input_height_, num_classes_);
+        spdlog::info("ONNX model loaded: {} (input {}x{}, {} classes, gpu={})",
+                      model_path_, input_width_, input_height_, num_classes_, gpu_enabled_);
 
     } catch (const Ort::Exception& e) {
-        spdlog::error("Failed to load ONNX model '{}': {}", model_path, e.what());
+        spdlog::error("Failed to load ONNX model '{}': {}", model_path_, e.what());
         session_.reset();
     }
+}
+
+void DetectionEngine::unload() {
+    std::lock_guard lock(session_mutex_);
+    if (!session_) return;
+
+    session_.reset();
+    input_names_str_.clear();
+    output_names_str_.clear();
+    input_names_.clear();
+    output_names_.clear();
+
+    spdlog::info("ONNX model unloaded, GPU memory released");
 }
 
 void DetectionEngine::initClassNames() {
@@ -302,6 +334,7 @@ std::vector<Detection> DetectionEngine::detect(const FrameData& frame,
                                                float conf_threshold,
                                                float iou_threshold,
                                                const std::vector<std::string>& filter_classes) {
+    std::lock_guard lock(session_mutex_);
     if (!session_) return {};
     if (frame.pixels.empty() || frame.width <= 0 || frame.height <= 0) return {};
 

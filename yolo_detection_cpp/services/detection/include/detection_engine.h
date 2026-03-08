@@ -3,6 +3,7 @@
 #include "frame_data.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,12 @@ class DetectionEngine {
 public:
     explicit DetectionEngine(const std::string& model_path, int num_classes = 80, bool gpu_enabled = false);
 
+    /// Load the ONNX session onto GPU/CPU. Safe to call multiple times.
+    void load();
+
+    /// Unload the ONNX session, releasing GPU memory. Safe to call multiple times.
+    void unload();
+
     /// Run inference on a single BGR24 frame
     std::vector<Detection> detect(const FrameData& frame,
                                   float conf_threshold = 0.5f,
@@ -28,7 +35,8 @@ public:
                                   const std::vector<std::string>& filter_classes = {});
 
     const std::vector<std::string>& classNames() const { return class_names_; }
-    bool isLoaded() const { return session_ != nullptr; }
+    bool isLoaded() const { std::lock_guard lock(session_mutex_); return session_ != nullptr; }
+    bool isModelValid() const { return model_valid_; }
     int inputWidth() const { return input_width_; }
     int inputHeight() const { return input_height_; }
 
@@ -49,8 +57,13 @@ private:
     void initClassNames();
 
     Ort::Env env_;
+    mutable std::mutex session_mutex_;
     std::unique_ptr<Ort::Session> session_;
     Ort::AllocatorWithDefaultOptions allocator_;
+
+    std::string model_path_;
+    bool gpu_enabled_ = false;
+    bool model_valid_ = false;  // true if model file exists and loaded successfully at least once
 
     std::vector<std::string> class_names_;
     int num_classes_;

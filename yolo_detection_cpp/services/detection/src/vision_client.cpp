@@ -49,11 +49,13 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
     last_prompt_ = buildPrompt(camera_id, detected_class);
 
     // 3. Build Ollama request body
+    //    keep_alive=0 tells Ollama to unload the model from GPU immediately after inference
     json body = {
         {"model", config_.model},
         {"prompt", last_prompt_},
         {"images", {base64Encode(image_data)}},
-        {"stream", false}
+        {"stream", false},
+        {"keep_alive", 0}
     };
     std::string body_str = body.dump();
 

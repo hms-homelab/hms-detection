@@ -67,6 +67,7 @@ if(BUILD_TESTS)
         tests/vision_client_test.cpp
         tests/event_manager_test.cpp
         tests/embedding_client_test.cpp
+        tests/gpu_lifecycle_test.cpp
         src/rtsp_capture.cpp
         src/buffer_service.cpp
         src/detection_engine.cpp

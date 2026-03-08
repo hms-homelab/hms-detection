@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.9.0 (2026-03-08)
+
+### Changed
+- **On-demand GPU lifecycle**: YOLO ONNX session now loads onto GPU only during motion events and unloads immediately after detection completes — GPU sits idle (~80MiB) instead of permanently holding the model (~1.2GB). Eliminates VRAM contention with Ollama/LLaVA.
+- **LLaVA auto-unload**: Ollama requests now include `keep_alive=0`, so the LLaVA model is unloaded from GPU immediately after inference — no more stale model blocking CUDA EP.
+
+### Fixed
+- **LLaVA HTTP 500 errors**: Ollama returned HTTP 500 when trying to load LLaVA (~4.9GB) while YOLO held ~1.2GB on a 6GB GPU. Now YOLO unloads before LLaVA runs, giving it full GPU access.
+- **False animal detections**: Removed continuous 24/7 background DetectionWorker loops that were never intended to run (main.cpp already skipped `startDetection()`). YOLO now only runs during motion events as designed.
+
+### Added
+- `DetectionEngine::load()` / `unload()` with mutex for thread-safe on-demand GPU session management
+- 19 GPU lifecycle unit tests: concurrent load/unload, deadlock prevention, stress tests, edge cases
+
 ## v2.8.1 (2026-03-06)
 
 ### Fixed

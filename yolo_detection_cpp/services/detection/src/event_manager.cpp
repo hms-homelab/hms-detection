@@ -202,6 +202,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         return;
     }
 
+    // Load YOLO onto GPU for this motion event
+    if (engine) {
+        engine->load();
+    }
+
     // 3. Get preroll frames — deep-copy pixels and release pool references immediately
     std::vector<std::shared_ptr<FrameData>> preroll_frames;
     {
@@ -387,6 +392,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                     early_notification_sent = true;
 
+                    // Unload YOLO from GPU — detection is done, free GPU for LLaVA
+                    if (engine) {
+                        engine->unload();
+                    }
+
                     // Launch LLaVA in parallel with recording (non-blocking)
                     if (config_.llava.enabled && !early_snapshot_path.empty()) {
                         std::vector<std::string> early_classes;
@@ -500,6 +510,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                         early_notification_sent = true;
 
+                        // Unload YOLO from GPU — detection is done, free GPU for LLaVA
+                        if (engine) {
+                            engine->unload();
+                        }
+
                         // Launch LLaVA in parallel
                         if (!early_snapshot_path.empty() && config_.llava.enabled) {
                             std::vector<std::string> early_classes;
@@ -546,6 +561,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
     // Nothing detected — delete recording, skip snapshot/DB/LLaVA
     if (all_detections.empty()) {
+        // Unload YOLO — no detections, no LLaVA needed
+        if (engine) {
+            engine->unload();
+        }
+
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - start_time);
         // Remove the recording file — no detections means no value
