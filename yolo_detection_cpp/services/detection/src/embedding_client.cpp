@@ -25,7 +25,8 @@ std::vector<float> EmbeddingClient::embed(const std::string& text) {
 
     json body = {
         {"model", model_},
-        {"input", text}
+        {"input", text},
+        {"keep_alive", 0}
     };
     std::string body_str = body.dump();
     std::string response_body;

@@ -4,6 +4,7 @@
 #include "event_recorder.h"
 #include "snapshot_writer.h"
 #include "vision_client.h"
+#include "gpu_coordinator.h"
 #include "mqtt_client.h"
 #include "db_pool.h"
 #include "config_manager.h"
@@ -24,6 +25,7 @@ public:
     EventManager(std::shared_ptr<BufferService> buffer_service,
                  std::shared_ptr<yolo::MqttClient> mqtt,
                  std::shared_ptr<yolo::DbPool> db,
+                 std::shared_ptr<GpuCoordinator> gpu_coord,
                  const yolo::AppConfig& config);
     ~EventManager();
 
@@ -63,6 +65,7 @@ private:
     std::shared_ptr<BufferService> buffer_service_;
     std::shared_ptr<yolo::MqttClient> mqtt_;
     std::shared_ptr<yolo::DbPool> db_;
+    std::shared_ptr<GpuCoordinator> gpu_coord_;
     yolo::AppConfig config_;
 
     mutable std::mutex events_mutex_;

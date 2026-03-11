@@ -3,6 +3,7 @@
 #include "buffer_service.h"
 #include "config_manager.h"
 #include "db_pool.h"
+#include "gpu_coordinator.h"
 
 #include <atomic>
 #include <memory>
@@ -12,11 +13,13 @@
 namespace hms {
 
 /// Takes periodic ambient snapshots from each camera's buffer,
-/// runs LLaVA description + embedding, and stores to periodic_snapshots table.
+/// runs moondream description + embedding, and stores to periodic_snapshots table.
+/// Uses GpuCoordinator to yield GPU to event processing when needed.
 class PeriodicSnapshotManager {
 public:
     PeriodicSnapshotManager(std::shared_ptr<BufferService> buffer_service,
                             std::shared_ptr<yolo::DbPool> db,
+                            std::shared_ptr<GpuCoordinator> gpu_coord,
                             const yolo::AppConfig& config);
     ~PeriodicSnapshotManager();
 
@@ -39,6 +42,7 @@ private:
 
     std::shared_ptr<BufferService> buffer_service_;
     std::shared_ptr<yolo::DbPool> db_;
+    std::shared_ptr<GpuCoordinator> gpu_coord_;
     yolo::AppConfig config_;
     std::atomic<bool> running_{false};
     std::vector<std::thread> threads_;

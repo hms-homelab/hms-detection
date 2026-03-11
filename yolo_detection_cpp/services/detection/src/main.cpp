@@ -20,6 +20,7 @@ extern "C" {
 #include "db_pool.h"
 #include "event_manager.h"
 #include "periodic_snapshot_manager.h"
+#include "gpu_coordinator.h"
 #include "controllers/health_controller.h"
 #include "controllers/detection_controller.h"
 
@@ -163,15 +164,18 @@ int main(int argc, char* argv[]) {
             spdlog::warn("Database unavailable: {} (event logging disabled)", e.what());
         }
 
+        // --- GPU Coordinator (shared between event manager and periodic snapshots) ---
+        auto gpu_coord = std::make_shared<hms::GpuCoordinator>();
+
         // --- EventManager (MQTT trigger → detect → record → publish) ---
         g_event_manager = std::make_shared<hms::EventManager>(
-            g_buffer_service, g_mqtt, db, config);
+            g_buffer_service, g_mqtt, db, gpu_coord, config);
         g_event_manager->start();
 
-        // --- Periodic Snapshot Manager (ambient scene snapshots) ---
+        // --- Periodic Snapshot Manager (ambient scene snapshots + moondream) ---
         if (db) {
             g_periodic_mgr = std::make_unique<hms::PeriodicSnapshotManager>(
-                g_buffer_service, db, config);
+                g_buffer_service, db, gpu_coord, config);
             g_periodic_mgr->start();
         }
 

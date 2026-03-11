@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.10.0 (2026-03-11)
+
+### Added
+- **Periodic snapshot processing**: Re-enabled ambient scene snapshots with moondream vision model (1.8B Q4, ~1.8GB VRAM) — small enough to coexist with YOLO on the RTX 3050 6GB
+- **GpuCoordinator**: Shared coordination between EventManager and PeriodicSnapshotManager — events always get GPU priority, periodic moondream inference aborts within ~1s via curl progress callback
+- **VisionClient abort support**: `analyze()` accepts an `abort_flag` (atomic bool) checked by libcurl progress callback — enables clean mid-inference cancellation
+- **VisionClient::forceUnloadModel()**: Static method to explicitly evict a model from Ollama VRAM
+- **`periodic_vision` config section**: Separate vision model config for periodic snapshots (model, endpoint, prompts, timeout) — decoupled from event LLaVA config
+
+### Changed
+- **Embedding client**: Added `keep_alive: 0` to Ollama embed requests so nomic-embed-text unloads from VRAM immediately after use
+- **PeriodicSnapshotManager**: Now accepts GpuCoordinator — skips moondream if event is active, aborts mid-inference if event fires, always saves JPEG regardless
+- **EventManager**: Signals GpuCoordinator on event start/finish — triggers periodic moondream abort on start, clears flag on finish
+
 ## v2.9.0 (2026-03-08)
 
 ### Changed

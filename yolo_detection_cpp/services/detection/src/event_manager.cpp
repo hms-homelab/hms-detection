@@ -17,10 +17,12 @@ namespace hms {
 EventManager::EventManager(std::shared_ptr<BufferService> buffer_service,
                            std::shared_ptr<yolo::MqttClient> mqtt,
                            std::shared_ptr<yolo::DbPool> db,
+                           std::shared_ptr<GpuCoordinator> gpu_coord,
                            const yolo::AppConfig& config)
     : buffer_service_(std::move(buffer_service))
     , mqtt_(std::move(mqtt))
     , db_(std::move(db))
+    , gpu_coord_(std::move(gpu_coord))
     , config_(config)
 {
 }
@@ -200,6 +202,13 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     if (!buffer) {
         spdlog::error("EventManager: no buffer for camera {}", camera_id);
         return;
+    }
+
+    // Signal GPU coordinator — abort any periodic moondream inference so
+    // Ollama can evict moondream and free VRAM for YOLO
+    if (gpu_coord_) {
+        gpu_coord_->eventStarted();
+        spdlog::debug("EventManager: [{}] GPU coordinator signaled — event started", camera_id);
     }
 
     // Load YOLO onto GPU for this motion event
@@ -559,7 +568,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                  camera_id,
                  std::chrono::duration<double, std::milli>(Clock::now() - t_finalize).count());
 
-    // Nothing detected — delete recording, skip snapshot/DB/LLaVA
+    // Nothing detected — delete recording, log to DB, skip snapshot/LLaVA
     if (all_detections.empty()) {
         // Unload YOLO — no detections, no LLaVA needed
         if (engine) {
@@ -568,6 +577,8 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - start_time);
+        double duration_seconds = elapsed.count() / 1000.0;
+
         // Remove the recording file — no detections means no value
         if (!recorder.fileName().empty()) {
             std::string rec_path = events_dir + "/" + recorder.fileName();
@@ -576,8 +587,25 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                 spdlog::info("EventManager: [{}] removed empty recording {}", camera_id, recorder.fileName());
             }
         }
+
+        // Log 0-detection event to DB for analytics
+        try {
+            if (db_) {
+                yolo::EventLogger::create_event(*db_, event_id, camera_id, "", "");
+                yolo::EventLogger::complete_event(*db_, event_id, duration_seconds,
+                                                  recorder.framesWritten(), 0);
+            }
+        } catch (const std::exception& e) {
+            spdlog::error("EventManager: DB logging failed for {}: {}", camera_id, e.what());
+        }
+
+        // Signal GPU coordinator — event done, periodic can resume
+        if (gpu_coord_) {
+            gpu_coord_->eventFinished();
+        }
+
         spdlog::info("EventManager: event {} completed for {} ({:.1f}s, {} frames, 0 detections)",
-                     event_id, camera_id, elapsed.count() / 1000.0, recorder.framesWritten());
+                     event_id, camera_id, duration_seconds, recorder.framesWritten());
         return;
     }
 
@@ -789,7 +817,11 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         spdlog::error("EventManager: LLaVA failed for {}: {}", camera_id, e.what());
     }
 
-    // 17. Cleanup handled by scope guard (runs on any exit path)
+    // 17. Signal GPU coordinator — event processing fully done, periodic can resume
+    if (gpu_coord_) {
+        gpu_coord_->eventFinished();
+        spdlog::debug("EventManager: [{}] GPU coordinator signaled — event finished", camera_id);
+    }
 
     spdlog::info("EventManager: event {} completed for {} ({:.1f}s, {} frames, {} detections)",
                  event_id, camera_id, duration_seconds,

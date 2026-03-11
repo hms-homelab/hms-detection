@@ -68,7 +68,7 @@ TEST_CASE("EventManager ignores duplicate motion_start for same camera", "[event
     auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
-    EventManager mgr(buffer_service, mqtt, nullptr, config);
+    EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
     mgr.start();
 
     // Small delay for MQTT subscriptions to settle
@@ -114,7 +114,7 @@ TEST_CASE("EventManager allows events for different cameras", "[event_manager]")
     auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
-    EventManager mgr(buffer_service, mqtt, nullptr, config);
+    EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
     mgr.start();
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -142,7 +142,7 @@ TEST_CASE("EventManager cleanup allows re-use after event completes", "[event_ma
     auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
-    EventManager mgr(buffer_service, mqtt, nullptr, config);
+    EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
     mgr.start();
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -432,7 +432,7 @@ TEST_CASE("EventManager motion_stop ends active event", "[event_manager]") {
     auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
-    EventManager mgr(buffer_service, mqtt, nullptr, config);
+    EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
     mgr.start();
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));

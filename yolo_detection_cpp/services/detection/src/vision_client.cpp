@@ -23,11 +23,29 @@ static size_t curlWriteCallback(char* ptr, size_t size, size_t nmemb, void* user
     return size * nmemb;
 }
 
+// libcurl progress callback — used to abort requests when abort_flag is set
+static int curlProgressCallback(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                                 curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+    auto* abort_flag = static_cast<const std::atomic<bool>*>(clientp);
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        return 1;  // Non-zero return aborts the transfer
+    }
+    return 0;
+}
+
 VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
                                            const std::string& camera_id,
-                                           const std::string& detected_class) {
+                                           const std::string& detected_class,
+                                           const std::atomic<bool>* abort_flag) {
     Result result;
     auto t0 = std::chrono::steady_clock::now();
+
+    // Check abort before doing any work
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        spdlog::info("VisionClient: aborted before start for {}", camera_id);
+        return result;
+    }
 
     // 1. Read snapshot file
     std::ifstream file(snapshot_path, std::ios::binary);
@@ -42,6 +60,13 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
 
     if (image_data.empty()) {
         spdlog::error("VisionClient: empty snapshot file: {}", snapshot_path);
+        return result;
+    }
+
+    // Check abort after file read
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        spdlog::info("VisionClient: aborted after file read for {}", camera_id);
         return result;
     }
 
@@ -83,10 +108,26 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);  // Thread-safe
 
+    // Set up abort via progress callback if abort_flag provided
+    if (abort_flag) {
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, curlProgressCallback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, abort_flag);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);  // Enable progress callback
+    }
+
     CURLcode res = curl_easy_perform(curl);
 
     auto elapsed = std::chrono::steady_clock::now() - t0;
     result.response_time_seconds = std::chrono::duration<double>(elapsed).count();
+
+    if (res == CURLE_ABORTED_BY_CALLBACK) {
+        result.was_aborted = true;
+        spdlog::info("VisionClient: request aborted for {} after {:.1f}s",
+                      camera_id, result.response_time_seconds);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return result;
+    }
 
     if (res != CURLE_OK) {
         spdlog::error("VisionClient: curl error for {}: {} ({:.1f}s)",
@@ -139,6 +180,45 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
                  result.is_valid, result.context);
 
     return result;
+}
+
+void VisionClient::forceUnloadModel(const std::string& ollama_endpoint,
+                                     const std::string& model_name) {
+    json body = {
+        {"model", model_name},
+        {"keep_alive", 0}
+    };
+    std::string body_str = body.dump();
+    std::string url = ollama_endpoint + "/api/generate";
+    std::string response_body;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) return;
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_str.size()));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    auto res = curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res == CURLE_OK) {
+        spdlog::info("VisionClient: force-unloaded {} from Ollama", model_name);
+    } else {
+        spdlog::warn("VisionClient: failed to force-unload {}: {}",
+                      model_name, curl_easy_strerror(res));
+    }
 }
 
 std::string VisionClient::buildPrompt(const std::string& camera_id,

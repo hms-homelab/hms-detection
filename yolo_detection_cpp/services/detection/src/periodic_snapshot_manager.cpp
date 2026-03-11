@@ -17,9 +17,11 @@ namespace hms {
 PeriodicSnapshotManager::PeriodicSnapshotManager(
     std::shared_ptr<BufferService> buffer_service,
     std::shared_ptr<yolo::DbPool> db,
+    std::shared_ptr<GpuCoordinator> gpu_coord,
     const yolo::AppConfig& config)
     : buffer_service_(std::move(buffer_service))
     , db_(std::move(db))
+    , gpu_coord_(std::move(gpu_coord))
     , config_(config)
 {
 }
@@ -65,11 +67,10 @@ void PeriodicSnapshotManager::cameraLoop(const std::string& camera_id,
 
     while (running_) {
         try {
-            // 1. Grab latest frame
+            // 1. Grab latest frame (CPU only — always safe)
             auto frame = buffer_service_->getLatestFrame(camera_id);
             if (!frame || frame->pixels.empty()) {
                 spdlog::warn("PeriodicSnapshotManager: no frame for {}", camera_id);
-                // Sleep the interval and retry
                 for (int i = 0; i < interval_seconds && running_; ++i) {
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
@@ -87,7 +88,7 @@ void PeriodicSnapshotManager::cameraLoop(const std::string& camera_id,
 
             auto snapshots_dir = config_.timeline.snapshots_dir;
 
-            // 2. Save full JPEG (no bounding boxes — ambient snapshot)
+            // 2. Save full JPEG (no bounding boxes — ambient snapshot, CPU only)
             auto snapshot_filename = saveSnapshot(frame_copy, camera_id, snapshots_dir);
             if (snapshot_filename.empty()) {
                 spdlog::error("PeriodicSnapshotManager: failed to save snapshot for {}", camera_id);
@@ -96,52 +97,67 @@ void PeriodicSnapshotManager::cameraLoop(const std::string& camera_id,
                 continue;
             }
 
-            // 3. Save thumbnail
+            // 3. Save thumbnail (CPU only)
             auto thumbnail_filename = saveThumbnail(frame_copy, camera_id, snapshots_dir);
 
-            // 4. Run LLaVA analysis
+            // 4. Run moondream vision analysis (GPU — check coordinator first)
             std::string context_text;
             bool is_valid = false;
-            if (config_.llava.enabled) {
-                VisionClient vision(config_.llava);
+            bool was_aborted = false;
 
-                // Use a general scene description prompt for periodic snapshots
-                yolo::LlavaConfig periodic_config = config_.llava;
-                periodic_config.default_prompt =
-                    "In 20 words or less, describe the scene. What do you see? "
-                    "Include weather, lighting, and any people, animals, or vehicles.";
-                // Clear camera-specific prompts for periodic — use generic
-                periodic_config.prompts.clear();
+            if (config_.periodic_vision.enabled) {
+                // Skip if event is already active — don't compete for Ollama queue
+                if (gpu_coord_ && gpu_coord_->isEventActive()) {
+                    spdlog::info("PeriodicSnapshotManager: [{}] skipping moondream — event active",
+                                 camera_id);
+                } else {
+                    VisionClient vision(config_.periodic_vision);
+                    auto snapshot_path = snapshots_dir + "/" + snapshot_filename;
 
-                VisionClient periodic_vision(periodic_config);
-                auto snapshot_path = snapshots_dir + "/" + snapshot_filename;
-                auto result = periodic_vision.analyze(snapshot_path, camera_id, "scene");
+                    // Pass abort flag so curl cancels if an event fires mid-inference.
+                    // The coordinator's abort flag gets set by EventManager::processEvent().
+                    auto result = vision.analyze(snapshot_path, camera_id, "scene",
+                        gpu_coord_ ? &gpu_coord_->abortPeriodicFlag() : nullptr);
 
-                context_text = result.context;
-                is_valid = result.is_valid;
-                spdlog::info("PeriodicSnapshotManager: {} LLaVA: valid={} text='{}'",
-                            camera_id, is_valid, context_text);
-            }
+                    context_text = result.context;
+                    is_valid = result.is_valid;
+                    was_aborted = result.was_aborted;
 
-            // 5. Generate embedding
-            std::vector<float> embedding;
-            if (!context_text.empty() && is_valid) {
-                EmbeddingClient emb_client(config_.llava.endpoint, "nomic-embed-text");
-                embedding = emb_client.embed(context_text);
-                if (embedding.empty()) {
-                    spdlog::warn("PeriodicSnapshotManager: embedding failed for {}", camera_id);
+                    if (was_aborted) {
+                        spdlog::info("PeriodicSnapshotManager: [{}] moondream aborted — event took priority",
+                                     camera_id);
+                    } else {
+                        spdlog::info("PeriodicSnapshotManager: [{}] moondream: valid={} text='{}'",
+                                     camera_id, is_valid, context_text);
+                    }
                 }
             }
 
-            // 6. Insert into DB
-            if (db_) {
-                yolo::api_queries::insert_periodic_snapshot(
-                    *db_, camera_id, snapshot_filename, thumbnail_filename,
-                    context_text, embedding, config_.llava.model, is_valid);
+            // 5. Generate embedding (only if we got valid context)
+            std::vector<float> embedding;
+            if (!context_text.empty() && is_valid && !was_aborted) {
+                // Skip embedding if event just started
+                if (!gpu_coord_ || !gpu_coord_->isEventActive()) {
+                    EmbeddingClient emb_client(config_.periodic_vision.endpoint, "nomic-embed-text");
+                    embedding = emb_client.embed(context_text);
+                    if (embedding.empty()) {
+                        spdlog::warn("PeriodicSnapshotManager: embedding failed for {}", camera_id);
+                    }
+                }
             }
 
-            spdlog::info("PeriodicSnapshotManager: completed snapshot for {} -> {}",
-                        camera_id, snapshot_filename);
+            // 6. Insert into DB (always — even without context, the snapshot is valuable)
+            if (db_) {
+                std::string model_used = was_aborted ? "" : config_.periodic_vision.model;
+                yolo::api_queries::insert_periodic_snapshot(
+                    *db_, camera_id, snapshot_filename, thumbnail_filename,
+                    context_text, embedding, model_used, is_valid);
+            }
+
+            spdlog::info("PeriodicSnapshotManager: completed snapshot for {} -> {}{}",
+                        camera_id, snapshot_filename,
+                        was_aborted ? " (no context — aborted)" :
+                        context_text.empty() ? " (no context)" : "");
 
         } catch (const std::exception& e) {
             spdlog::error("PeriodicSnapshotManager: error for {}: {}", camera_id, e.what());
