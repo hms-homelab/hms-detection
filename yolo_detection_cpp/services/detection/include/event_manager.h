@@ -41,6 +41,15 @@ public:
     /// Number of currently active events
     size_t activeEventCount() const;
 
+    /// Pause/resume detection for a specific camera (runtime toggle, not config)
+    void setPaused(const std::string& camera_id, bool paused);
+
+    /// Check if a camera is paused
+    bool isPaused(const std::string& camera_id) const;
+
+    /// Get pause state for all cameras
+    std::unordered_map<std::string, bool> getAllPausedStates() const;
+
 private:
     /// Called when motion start MQTT message arrives
     void onMotionStart(const std::string& camera_id, int post_roll_seconds);
@@ -71,6 +80,9 @@ private:
     mutable std::mutex events_mutex_;
     std::unordered_map<std::string, std::unique_ptr<ActiveEvent>> active_events_;
     std::vector<std::thread> orphaned_threads_;
+
+    mutable std::mutex paused_mutex_;
+    std::unordered_map<std::string, bool> paused_cameras_;
 
     void joinOrphanedThreads();
 

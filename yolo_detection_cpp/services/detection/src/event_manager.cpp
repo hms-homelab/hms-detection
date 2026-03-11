@@ -108,7 +108,30 @@ size_t EventManager::activeEventCount() const {
     return active_events_.size();
 }
 
+void EventManager::setPaused(const std::string& camera_id, bool paused) {
+    std::lock_guard lock(paused_mutex_);
+    paused_cameras_[camera_id] = paused;
+    spdlog::info("EventManager: camera {} {}", camera_id, paused ? "PAUSED" : "RESUMED");
+}
+
+bool EventManager::isPaused(const std::string& camera_id) const {
+    std::lock_guard lock(paused_mutex_);
+    auto it = paused_cameras_.find(camera_id);
+    return it != paused_cameras_.end() && it->second;
+}
+
+std::unordered_map<std::string, bool> EventManager::getAllPausedStates() const {
+    std::lock_guard lock(paused_mutex_);
+    return paused_cameras_;
+}
+
 void EventManager::onMotionStart(const std::string& camera_id, int post_roll_seconds) {
+    // Check if camera is paused — discard motion event
+    if (isPaused(camera_id)) {
+        spdlog::info("EventManager: ignoring motion for paused camera {}", camera_id);
+        return;
+    }
+
     // Join any previously orphaned threads (non-blocking if they've finished)
     joinOrphanedThreads();
 

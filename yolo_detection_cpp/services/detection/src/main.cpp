@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <csignal>
 #include <atomic>
@@ -148,6 +149,7 @@ int main(int argc, char* argv[]) {
 
         // Inject MQTT into health controller for status reporting
         hms::HealthController::setMqttClient(g_mqtt);
+        // EventManager will be injected after creation (below)
 
         // --- Database pool (for event logging) ---
         std::shared_ptr<yolo::DbPool> db;
@@ -171,6 +173,7 @@ int main(int argc, char* argv[]) {
         g_event_manager = std::make_shared<hms::EventManager>(
             g_buffer_service, g_mqtt, db, gpu_coord, config);
         g_event_manager->start();
+        hms::HealthController::setEventManager(g_event_manager);
 
         // --- Periodic Snapshot Manager (ambient scene snapshots + moondream) ---
         if (db) {
@@ -192,11 +195,71 @@ int main(int argc, char* argv[]) {
                 auto origin = std::string(req->getHeader("Origin"));
                 std::string allow_origin = origin.empty() ? "*" : origin;
                 resp->addHeader("Access-Control-Allow-Origin", allow_origin);
-                resp->addHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+                resp->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
                 resp->addHeader("Access-Control-Allow-Headers",
                                 "Content-Type, Authorization, Accept");
             }
         );
+
+        // OPTIONS preflight handler
+        app.registerHandler(
+            "/api/cameras/{camera_id}/paused",
+            [](const drogon::HttpRequestPtr& /*req*/,
+               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& /*camera_id*/) {
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k204NoContent);
+                callback(resp);
+            },
+            {drogon::Options});
+
+        // GET /api/cameras/{camera_id}/paused — check if camera detection is paused
+        app.registerHandler(
+            "/api/cameras/{camera_id}/paused",
+            [](const drogon::HttpRequestPtr& /*req*/,
+               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& camera_id) {
+                using json = nlohmann::json;
+                bool paused = g_event_manager ? g_event_manager->isPaused(camera_id) : false;
+                json result = {{"camera_id", camera_id}, {"paused", paused}};
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k200OK);
+                resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+                resp->setBody(result.dump());
+                callback(resp);
+            },
+            {drogon::Get});
+
+        // POST /api/cameras/{camera_id}/paused — set pause state {"paused": true/false}
+        app.registerHandler(
+            "/api/cameras/{camera_id}/paused",
+            [](const drogon::HttpRequestPtr& req,
+               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& camera_id) {
+                using json = nlohmann::json;
+                bool paused = false;
+                try {
+                    auto body = json::parse(req->body());
+                    paused = body.value("paused", false);
+                } catch (...) {
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k400BadRequest);
+                    resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+                    resp->setBody(R"({"error":"Invalid JSON body, expected {\"paused\": true/false}"})");
+                    callback(resp);
+                    return;
+                }
+                if (g_event_manager) {
+                    g_event_manager->setPaused(camera_id, paused);
+                }
+                json result = {{"camera_id", camera_id}, {"paused", paused}};
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k200OK);
+                resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+                resp->setBody(result.dump());
+                callback(resp);
+            },
+            {drogon::Post});
 
         // MIME type lookup for static file serving
         auto getMimeType = [](const std::string& filename) -> std::string {

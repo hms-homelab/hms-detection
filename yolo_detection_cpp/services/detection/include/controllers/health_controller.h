@@ -8,6 +8,7 @@ namespace yolo { class MqttClient; }
 namespace hms {
 
 class BufferService;
+class EventManager;
 
 class HealthController : public drogon::HttpController<HealthController> {
 public:
@@ -20,10 +21,12 @@ public:
 
     static void setBufferService(std::shared_ptr<BufferService> svc);
     static void setMqttClient(std::shared_ptr<yolo::MqttClient> mqtt);
+    static void setEventManager(std::shared_ptr<EventManager> em);
 
 private:
     static inline std::shared_ptr<BufferService> buffer_service_;
     static inline std::shared_ptr<yolo::MqttClient> mqtt_client_;
+    static inline std::shared_ptr<EventManager> event_manager_;
 };
 
 }  // namespace hms

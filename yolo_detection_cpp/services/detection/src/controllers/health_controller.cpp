@@ -1,5 +1,6 @@
 #include "controllers/health_controller.h"
 #include "buffer_service.h"
+#include "event_manager.h"
 #include "mqtt_client.h"
 #include "time_utils.h"
 
@@ -15,6 +16,10 @@ void HealthController::setBufferService(std::shared_ptr<BufferService> svc) {
 
 void HealthController::setMqttClient(std::shared_ptr<yolo::MqttClient> mqtt) {
     mqtt_client_ = std::move(mqtt);
+}
+
+void HealthController::setEventManager(std::shared_ptr<EventManager> em) {
+    event_manager_ = std::move(em);
 }
 
 void HealthController::getHealth(
@@ -94,6 +99,14 @@ void HealthController::getHealth(
         status = "degraded";
     }
 
+    // Paused cameras
+    json paused_json = json::object();
+    if (event_manager_) {
+        for (const auto& [cam_id, paused] : event_manager_->getAllPausedStates()) {
+            if (paused) paused_json[cam_id] = true;
+        }
+    }
+
     json result = {
         {"service", "hms-detection"},
         {"status", status},
@@ -101,6 +114,7 @@ void HealthController::getHealth(
         {"cameras", cameras_json},
         {"detection", detection_json},
         {"mqtt", mqtt_json},
+        {"paused_cameras", paused_json},
     };
 
     auto resp = drogon::HttpResponse::newHttpResponse();
