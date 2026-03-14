@@ -19,7 +19,7 @@ static FrameData makeTestFrame(int w, int h, uint8_t b = 128, uint8_t g = 128, u
     FrameData frame;
     frame.resize(w, h);
     frame.frame_number = 1;
-    frame.timestamp = Clock::now();
+    frame.timestamp = SteadyClock::now();
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             auto* px = frame.pixels.data() + y * frame.stride + x * 3;
@@ -249,7 +249,7 @@ TEST_CASE("Concurrent events on different cameras simulate load/unload", "[gpu_l
 // ============================================================================
 
 TEST_CASE("VisionClient builds request with keep_alive=0", "[gpu_lifecycle][vision]") {
-    yolo::LlavaConfig config;
+    hms::LlavaConfig config;
     config.enabled = true;
     config.endpoint = "http://localhost:11434";
     config.model = "llava:7b";
@@ -274,7 +274,7 @@ TEST_CASE("VisionClient selectPrimaryClass priority", "[gpu_lifecycle][vision]")
 }
 
 TEST_CASE("VisionClient analyze fails gracefully on missing snapshot", "[gpu_lifecycle][vision]") {
-    yolo::LlavaConfig config;
+    hms::LlavaConfig config;
     config.enabled = true;
     config.endpoint = "http://localhost:11434";
     config.model = "llava:7b";
@@ -293,7 +293,7 @@ TEST_CASE("VisionClient analyze fails gracefully on missing snapshot", "[gpu_lif
 // ============================================================================
 
 TEST_CASE("BufferService loadDetectionModel with missing model", "[gpu_lifecycle][buffer]") {
-    yolo::AppConfig config;
+    hms::AppConfig config;
     config.detection.model_path = "/nonexistent.onnx";
     config.detection.gpu_enabled = false;
     config.buffer.preroll_seconds = 2;

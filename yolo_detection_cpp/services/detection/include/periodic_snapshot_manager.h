@@ -18,9 +18,9 @@ namespace hms {
 class PeriodicSnapshotManager {
 public:
     PeriodicSnapshotManager(std::shared_ptr<BufferService> buffer_service,
-                            std::shared_ptr<yolo::DbPool> db,
+                            std::shared_ptr<hms::DbPool> db,
                             std::shared_ptr<GpuCoordinator> gpu_coord,
-                            const yolo::AppConfig& config);
+                            const hms::AppConfig& config);
     ~PeriodicSnapshotManager();
 
     PeriodicSnapshotManager(const PeriodicSnapshotManager&) = delete;
@@ -41,9 +41,9 @@ private:
                               const std::string& snapshots_dir);
 
     std::shared_ptr<BufferService> buffer_service_;
-    std::shared_ptr<yolo::DbPool> db_;
+    std::shared_ptr<hms::DbPool> db_;
     std::shared_ptr<GpuCoordinator> gpu_coord_;
-    yolo::AppConfig config_;
+    hms::AppConfig config_;
     std::atomic<bool> running_{false};
     std::vector<std::thread> threads_;
 };

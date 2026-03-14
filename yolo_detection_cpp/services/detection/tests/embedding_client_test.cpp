@@ -36,26 +36,26 @@ TEST_CASE("EmbeddingClient::embed returns empty for unreachable server", "[embed
 // ────────────────────────────────────────────────────────────────────
 
 TEST_CASE("Periodic snapshot interval config defaults to disabled", "[periodic]") {
-    yolo::CameraConfig cam;
+    hms::CameraConfig cam;
     CHECK(cam.periodic_snapshot_interval == 0);
 }
 
 TEST_CASE("Periodic snapshot skips disabled cameras", "[periodic]") {
-    yolo::AppConfig config;
+    hms::AppConfig config;
 
-    yolo::CameraConfig cam1;
+    hms::CameraConfig cam1;
     cam1.id = "patio";
     cam1.enabled = true;
     cam1.periodic_snapshot_interval = 300;
     config.cameras["patio"] = cam1;
 
-    yolo::CameraConfig cam2;
+    hms::CameraConfig cam2;
     cam2.id = "garage";
     cam2.enabled = false;
     cam2.periodic_snapshot_interval = 300;
     config.cameras["garage"] = cam2;
 
-    yolo::CameraConfig cam3;
+    hms::CameraConfig cam3;
     cam3.id = "side";
     cam3.enabled = true;
     cam3.periodic_snapshot_interval = 0;  // Disabled via interval

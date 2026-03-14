@@ -6,7 +6,7 @@
 
 namespace hms {
 
-BufferService::BufferService(const yolo::AppConfig& config)
+BufferService::BufferService(const hms::AppConfig& config)
     : config_(config)
 {
     for (const auto& [id, cam_cfg] : config.cameras) {

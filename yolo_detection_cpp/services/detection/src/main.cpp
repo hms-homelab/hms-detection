@@ -32,7 +32,7 @@ namespace {
 std::atomic<bool> g_shutdown{false};
 std::shared_ptr<hms::BufferService> g_buffer_service;
 std::shared_ptr<hms::EventManager> g_event_manager;
-std::shared_ptr<yolo::MqttClient> g_mqtt;
+std::shared_ptr<hms::MqttClient> g_mqtt;
 std::unique_ptr<hms::PeriodicSnapshotManager> g_periodic_mgr;
 
 void signal_handler(int sig) {
@@ -51,7 +51,7 @@ void signal_handler(int sig) {
     drogon::app().quit();
 }
 
-void setup_logging(const yolo::LoggingConfig& log_config) {
+void setup_logging(const hms::LoggingConfig& log_config) {
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
 
@@ -108,7 +108,7 @@ void ffmpeg_log_callback(void* /*ptr*/, int level, const char* fmt, va_list vl) 
 int main(int argc, char* argv[]) {
     try {
         auto config_path = find_config_path(argc, argv);
-        auto config = yolo::ConfigManager::load(config_path);
+        auto config = hms::ConfigManager::load(config_path);
 
         setup_logging(config.logging);
         spdlog::info("Starting hms-detection service v{}", HMS_VERSION);
@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
         g_buffer_service->loadDetectionModel();
 
         // --- MQTT (initialized BEFORE app.run(), independent subsystem) ---
-        g_mqtt = std::make_shared<yolo::MqttClient>(config.mqtt);
+        g_mqtt = std::make_shared<hms::MqttClient>(config.mqtt);
         try {
             if (g_mqtt->connect()) {
                 // Publish online status (retained)
@@ -152,16 +152,16 @@ int main(int argc, char* argv[]) {
         // EventManager will be injected after creation (below)
 
         // --- Database pool (for event logging) ---
-        std::shared_ptr<yolo::DbPool> db;
+        std::shared_ptr<hms::DbPool> db;
         try {
-            yolo::DbPool::Config db_cfg;
+            hms::DbPool::Config db_cfg;
             db_cfg.host = config.database.host;
             db_cfg.port = config.database.port;
             db_cfg.user = config.database.user;
             db_cfg.password = config.database.password;
             db_cfg.database = config.database.database;
             db_cfg.pool_size = config.database.pool_size;
-            db = std::make_shared<yolo::DbPool>(db_cfg);
+            db = std::make_shared<hms::DbPool>(db_cfg);
         } catch (const std::exception& e) {
             spdlog::warn("Database unavailable: {} (event logging disabled)", e.what());
         }

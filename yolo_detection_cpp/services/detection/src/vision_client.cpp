@@ -11,7 +11,7 @@ using json = nlohmann::json;
 
 namespace hms {
 
-VisionClient::VisionClient(const yolo::LlavaConfig& config)
+VisionClient::VisionClient(const hms::LlavaConfig& config)
     : config_(config)
 {
 }

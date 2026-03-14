@@ -8,8 +8,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-yolo::LlavaConfig makeConfig() {
-    yolo::LlavaConfig cfg;
+hms::LlavaConfig makeConfig() {
+    hms::LlavaConfig cfg;
     cfg.enabled = true;
     cfg.endpoint = "http://localhost:11434";
     cfg.model = "llava:7b";

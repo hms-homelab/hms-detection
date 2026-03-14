@@ -15,10 +15,10 @@ using json = nlohmann::json;
 namespace hms {
 
 EventManager::EventManager(std::shared_ptr<BufferService> buffer_service,
-                           std::shared_ptr<yolo::MqttClient> mqtt,
-                           std::shared_ptr<yolo::DbPool> db,
+                           std::shared_ptr<hms::MqttClient> mqtt,
+                           std::shared_ptr<hms::DbPool> db,
                            std::shared_ptr<GpuCoordinator> gpu_coord,
-                           const yolo::AppConfig& config)
+                           const hms::AppConfig& config)
     : buffer_service_(std::move(buffer_service))
     , mqtt_(std::move(mqtt))
     , db_(std::move(db))
@@ -331,14 +331,14 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
 
     // 7. Live phase: pull frames, write to recorder, sample detections
-    auto start_time = Clock::now();
+    auto start_time = SteadyClock::now();
     int frames_since_detection = 0;
     constexpr int DETECTION_SAMPLE_INTERVAL = 3;  // detect every 3rd frame
     int inference_count = 0;
 
     spdlog::info("EventManager: [{}] live phase started ({:.0f}ms after motion start)",
                  camera_id,
-                 std::chrono::duration<double, std::milli>(Clock::now() - start_time).count());
+                 std::chrono::duration<double, std::milli>(SteadyClock::now() - start_time).count());
 
     while (!my_event->stop_requested && !recorder.isMaxDurationReached()) {
         auto frame = buffer->getLatestFrame();
@@ -354,9 +354,9 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         if (!early_notification_sent && engine && engine->isLoaded()
             && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
             frames_since_detection = 0;
-            auto t_inf = Clock::now();
+            auto t_inf = SteadyClock::now();
             auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
-            auto inf_ms = std::chrono::duration<double, std::milli>(Clock::now() - t_inf).count();
+            auto inf_ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - t_inf).count();
             inference_count++;
 
             if (inference_count <= 3 || !dets.empty()) {
@@ -384,7 +384,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                 if (det_conf >= conf_gate) {
                     auto first_det_ms = std::chrono::duration<double, std::milli>(
-                        Clock::now() - start_time).count();
+                        SteadyClock::now() - start_time).count();
 
                     // Save snapshot from best-confidence frame
                     std::string snapshots_dir_early = config_.timeline.snapshots_dir;
@@ -408,7 +408,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                     json early_msg = {
                         {"camera_id", camera_id},
-                        {"timestamp", yolo::time_utils::now_iso8601()},
+                        {"timestamp", hms::time_utils::now_iso8601()},
                         {"detections", early_dets},
                         {"detection_count", static_cast<int>(dets.size())},
                         {"detected_objects", dets[0].class_name},
@@ -464,7 +464,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
 
     // 8. Post-roll: continue recording for post_roll_seconds
-    auto postroll_start = Clock::now();
+    auto postroll_start = SteadyClock::now();
     spdlog::info("EventManager: [{}] post-roll started ({}s), {} inferences so far, {} detections",
                  camera_id, post_roll_seconds, inference_count, all_detections.size());
 
@@ -479,9 +479,9 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             if (!early_notification_sent && engine && engine->isLoaded()
                 && frames_since_detection >= DETECTION_SAMPLE_INTERVAL) {
                 frames_since_detection = 0;
-                auto t_inf = Clock::now();
+                auto t_inf = SteadyClock::now();
                 auto dets = engine->detect(*frame, conf_threshold, iou_threshold, filter_classes);
-                auto inf_ms = std::chrono::duration<double, std::milli>(Clock::now() - t_inf).count();
+                auto inf_ms = std::chrono::duration<double, std::milli>(SteadyClock::now() - t_inf).count();
                 inference_count++;
 
                 for (const auto& d : dets) {
@@ -502,7 +502,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                     if (det_conf >= conf_gate) {
                         auto first_det_ms = std::chrono::duration<double, std::milli>(
-                            Clock::now() - start_time).count();
+                            SteadyClock::now() - start_time).count();
 
                         // Save snapshot from best-confidence frame
                         std::string snapshots_dir_early = config_.timeline.snapshots_dir;
@@ -526,7 +526,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                         json early_msg = {
                             {"camera_id", camera_id},
-                            {"timestamp", yolo::time_utils::now_iso8601()},
+                            {"timestamp", hms::time_utils::now_iso8601()},
                             {"detections", early_dets},
                             {"detection_count", static_cast<int>(dets.size())},
                             {"detected_objects", dets[0].class_name},
@@ -581,15 +581,15 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     }
 
     auto postroll_ms = std::chrono::duration<double, std::milli>(
-        Clock::now() - postroll_start).count();
+        SteadyClock::now() - postroll_start).count();
     spdlog::info("EventManager: [{}] post-roll complete ({:.0f}ms)", camera_id, postroll_ms);
 
     // 9. Finalize recording
-    auto t_finalize = Clock::now();
+    auto t_finalize = SteadyClock::now();
     recorder.finalize();
     spdlog::info("EventManager: [{}] recording finalized ({:.0f}ms)",
                  camera_id,
-                 std::chrono::duration<double, std::milli>(Clock::now() - t_finalize).count());
+                 std::chrono::duration<double, std::milli>(SteadyClock::now() - t_finalize).count());
 
     // Nothing detected — delete recording, log to DB, skip snapshot/LLaVA
     if (all_detections.empty()) {
@@ -599,7 +599,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         }
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            Clock::now() - start_time);
+            SteadyClock::now() - start_time);
         double duration_seconds = elapsed.count() / 1000.0;
 
         // Remove the recording file — no detections means no value
@@ -614,8 +614,8 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
         // Log 0-detection event to DB for analytics
         try {
             if (db_) {
-                yolo::EventLogger::create_event(*db_, event_id, camera_id, "", "");
-                yolo::EventLogger::complete_event(*db_, event_id, duration_seconds,
+                hms::EventLogger::create_event(*db_, event_id, camera_id, "", "");
+                hms::EventLogger::complete_event(*db_, event_id, duration_seconds,
                                                   recorder.framesWritten(), 0);
             }
         } catch (const std::exception& e) {
@@ -644,7 +644,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
     // 11. Compute duration
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        Clock::now() - start_time);
+        SteadyClock::now() - start_time);
     double duration_seconds = elapsed.count() / 1000.0;
 
     // 12. Deduplicate detections for MQTT payload (one per class, highest confidence)
@@ -732,16 +732,16 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
     try {
         if (db_) {
             std::string db_recording = below_gate ? "" : recorder.fileName();
-            yolo::EventLogger::create_event(*db_, event_id, camera_id,
+            hms::EventLogger::create_event(*db_, event_id, camera_id,
                                             db_recording, snapshot_filename);
 
-            std::vector<yolo::EventLogger::DetectionRecord> det_records;
+            std::vector<hms::EventLogger::DetectionRecord> det_records;
             for (const auto& [cls, d] : unique_dets) {
                 det_records.push_back({d.class_name, d.confidence, d.x1, d.y1, d.x2, d.y2});
             }
-            yolo::EventLogger::log_detections(*db_, event_id, det_records);
+            hms::EventLogger::log_detections(*db_, event_id, det_records);
 
-            yolo::EventLogger::complete_event(*db_, event_id, duration_seconds,
+            hms::EventLogger::complete_event(*db_, event_id, duration_seconds,
                                               recorder.framesWritten(),
                                               static_cast<int>(all_detections.size()));
         }
@@ -758,7 +758,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
             if (llava_valid && mqtt_) {
                 json context_msg = {
                     {"camera_id", camera_id},
-                    {"timestamp", yolo::time_utils::now_iso8601()},
+                    {"timestamp", hms::time_utils::now_iso8601()},
                     {"context", llava_context},
                     {"recording_url", recorder.fileName().empty() ? json(nullptr)
                         : json(base_url + "/events/" + recorder.fileName())},
@@ -775,7 +775,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
             if (db_ && llava_valid) {
                 try {
-                    yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
+                    hms::EventLogger::log_ai_context(*db_, event_id, camera_id, {
                         .context_text = llava_context,
                         .detected_classes = unique_classes,
                         .source_model = config_.llava.model,
@@ -805,7 +805,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
                 if (vr.is_valid && mqtt_) {
                     json context_msg = {
                         {"camera_id", camera_id},
-                        {"timestamp", yolo::time_utils::now_iso8601()},
+                        {"timestamp", hms::time_utils::now_iso8601()},
                         {"context", vr.context},
                         {"recording_url", recorder.fileName().empty() ? json(nullptr)
                             : json(base_url + "/events/" + recorder.fileName())},
@@ -822,7 +822,7 @@ void EventManager::processEvent(const std::string& camera_id, int post_roll_seco
 
                 if (db_) {
                     try {
-                        yolo::EventLogger::log_ai_context(*db_, event_id, camera_id, {
+                        hms::EventLogger::log_ai_context(*db_, event_id, camera_id, {
                             .context_text = vr.context,
                             .detected_classes = unique_classes,
                             .source_model = config_.llava.model,

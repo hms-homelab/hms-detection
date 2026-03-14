@@ -11,7 +11,7 @@ std::shared_ptr<FrameData> makeFrame(uint64_t num, int w = 4, int h = 4) {
     auto f = std::make_shared<FrameData>();
     f->frame_number = num;
     f->resize(w, h);
-    f->timestamp = Clock::now();
+    f->timestamp = SteadyClock::now();
     return f;
 }
 }  // namespace

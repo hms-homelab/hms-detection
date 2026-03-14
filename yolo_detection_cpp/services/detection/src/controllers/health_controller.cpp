@@ -14,7 +14,7 @@ void HealthController::setBufferService(std::shared_ptr<BufferService> svc) {
     buffer_service_ = std::move(svc);
 }
 
-void HealthController::setMqttClient(std::shared_ptr<yolo::MqttClient> mqtt) {
+void HealthController::setMqttClient(std::shared_ptr<hms::MqttClient> mqtt) {
     mqtt_client_ = std::move(mqtt);
 }
 
@@ -34,7 +34,7 @@ void HealthController::getHealth(
     json cameras_json = json::object();
     for (const auto& s : stats) {
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            Clock::now() - s.last_frame_time).count();
+            SteadyClock::now() - s.last_frame_time).count();
 
         cameras_json[s.camera_id] = {
             {"name", s.camera_name},
@@ -110,7 +110,7 @@ void HealthController::getHealth(
     json result = {
         {"service", "hms-detection"},
         {"status", status},
-        {"timestamp", yolo::time_utils::now_iso8601()},
+        {"timestamp", hms::time_utils::now_iso8601()},
         {"cameras", cameras_json},
         {"detection", detection_json},
         {"mqtt", mqtt_json},

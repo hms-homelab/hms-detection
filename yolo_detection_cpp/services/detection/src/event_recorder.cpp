@@ -201,7 +201,7 @@ void EventRecorder::requestStop(int post_roll_seconds) {
     if (!stop_requested_) {
         stop_requested_ = true;
         post_roll_seconds_ = post_roll_seconds;
-        stop_requested_time_ = Clock::now();
+        stop_requested_time_ = SteadyClock::now();
         spdlog::debug("EventRecorder: stop requested for {}, post-roll {}s",
                       camera_id_, post_roll_seconds);
     }
@@ -242,7 +242,7 @@ std::string EventRecorder::fileName() const {
 bool EventRecorder::isPostRollComplete() const {
     if (!stop_requested_) return false;
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-        Clock::now() - stop_requested_time_).count();
+        SteadyClock::now() - stop_requested_time_).count();
     return elapsed >= post_roll_seconds_;
 }
 

@@ -9,14 +9,14 @@
 
 namespace hms {
 
-using Clock = std::chrono::steady_clock;
+using SteadyClock = std::chrono::steady_clock;
 
 struct FrameData {
     std::vector<uint8_t> pixels;  // BGR24 interleaved
     int width = 0;
     int height = 0;
     int stride = 0;               // bytes per row (width * 3 for BGR24)
-    Clock::time_point timestamp;
+    SteadyClock::time_point timestamp;
     uint64_t frame_number = 0;
 
     void resize(int w, int h) {

@@ -28,7 +28,7 @@ public:
         uint64_t reconnect_count = 0;
         uint64_t consecutive_failures = 0;
         bool is_connected = false;
-        Clock::time_point last_frame_time;
+        SteadyClock::time_point last_frame_time;
         int frame_width = 0;
         int frame_height = 0;
     };
@@ -73,12 +73,12 @@ private:
     std::atomic<uint64_t> reconnect_count_{0};
     std::atomic<uint64_t> consecutive_failures_{0};
     std::atomic<bool> is_connected_{false};
-    std::atomic<Clock::time_point> last_frame_time_{};
+    std::atomic<SteadyClock::time_point> last_frame_time_{};
     std::atomic<int> frame_width_{0};
     std::atomic<int> frame_height_{0};
 
     // Stale-stream detection: set when stream opens or frame arrives
-    std::atomic<Clock::time_point> last_activity_time_{};
+    std::atomic<SteadyClock::time_point> last_activity_time_{};
     static constexpr int kStaleStreamTimeoutSec = 30;
 };
 

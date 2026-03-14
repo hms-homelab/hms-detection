@@ -28,10 +28,10 @@ public:
         bool is_healthy = false;
         int frame_width = 0;
         int frame_height = 0;
-        Clock::time_point last_frame_time;
+        SteadyClock::time_point last_frame_time;
     };
 
-    explicit BufferService(const yolo::AppConfig& config);
+    explicit BufferService(const hms::AppConfig& config);
     ~BufferService();
 
     BufferService(const BufferService&) = delete;
@@ -85,7 +85,7 @@ private:
         std::unique_ptr<RtspCapture> capture;
     };
 
-    yolo::AppConfig config_;
+    hms::AppConfig config_;
     std::unordered_map<std::string, CameraState> cameras_;
 
     // Detection

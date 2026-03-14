@@ -11,7 +11,7 @@ static FrameData makeFrame(int w, int h, uint8_t b = 0, uint8_t g = 0, uint8_t r
     FrameData frame;
     frame.resize(w, h);
     frame.frame_number = 1;
-    frame.timestamp = Clock::now();
+    frame.timestamp = SteadyClock::now();
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             auto* px = frame.pixels.data() + y * frame.stride + x * 3;

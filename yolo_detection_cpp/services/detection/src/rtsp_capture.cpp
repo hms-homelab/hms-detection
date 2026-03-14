@@ -69,8 +69,8 @@ bool RtspCapture::openStream() {
         // Force-abort if stream is stalled (no frames for kStaleStreamTimeoutSec)
         auto last = self->last_activity_time_.load();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            Clock::now() - last).count();
-        if (last != Clock::time_point{} && elapsed > kStaleStreamTimeoutSec) {
+            SteadyClock::now() - last).count();
+        if (last != SteadyClock::time_point{} && elapsed > kStaleStreamTimeoutSec) {
             spdlog::warn("[{}] Stream stale ({}s without frames), forcing reconnect",
                          self->camera_id_, elapsed);
             return 1;
@@ -80,7 +80,7 @@ bool RtspCapture::openStream() {
 
     // Reset activity time BEFORE opening so the stale-stream callback
     // doesn't immediately abort the new connection attempt.
-    last_activity_time_ = Clock::now();
+    last_activity_time_ = SteadyClock::now();
 
     int ret = avformat_open_input(&fmt_ctx_, rtsp_url_.c_str(), nullptr, &opts);
     av_dict_free(&opts);
@@ -139,7 +139,7 @@ bool RtspCapture::openStream() {
     packet_ = av_packet_alloc();
 
     // Mark activity so stale-stream timeout starts from now
-    last_activity_time_ = Clock::now();
+    last_activity_time_ = SteadyClock::now();
 
     spdlog::info("[{}] Connected: {}x{} ({})", camera_id_,
                  codec_ctx_->width, codec_ctx_->height,
@@ -200,8 +200,8 @@ void RtspCapture::captureLoop() {
                              backoff_seconds, consecutive_failures_.load());
 
                 // Exponential backoff with running_ checks
-                auto deadline = Clock::now() + std::chrono::seconds(backoff_seconds);
-                while (running_ && Clock::now() < deadline) {
+                auto deadline = SteadyClock::now() + std::chrono::seconds(backoff_seconds);
+                while (running_ && SteadyClock::now() < deadline) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 }
                 backoff_seconds = std::min(backoff_seconds * 2, 60);
@@ -273,12 +273,12 @@ void RtspCapture::captureLoop() {
             sws_scale(sws_ctx_, av_frame_->data, av_frame_->linesize,
                       0, h, dst_data, dst_linesize);
 
-            frame->timestamp = Clock::now();
+            frame->timestamp = SteadyClock::now();
             frame->frame_number = ++frame_counter;
 
             ++frames_captured_;
-            last_frame_time_ = Clock::now();
-            last_activity_time_ = Clock::now();
+            last_frame_time_ = SteadyClock::now();
+            last_activity_time_ = SteadyClock::now();
 
             // Deliver to buffer
             on_frame_(std::move(frame));

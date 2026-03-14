@@ -16,7 +16,7 @@ namespace hms {
 
 struct DetectionResult {
     std::vector<Detection> detections;
-    Clock::time_point timestamp;
+    SteadyClock::time_point timestamp;
     uint64_t frame_number = 0;
 };
 
@@ -25,8 +25,8 @@ public:
     DetectionWorker(const std::string& camera_id,
                     std::shared_ptr<CameraBuffer> buffer,
                     std::shared_ptr<DetectionEngine> engine,
-                    const yolo::CameraConfig& camera_config,
-                    const yolo::DetectionConfig& detection_config);
+                    const hms::CameraConfig& camera_config,
+                    const hms::DetectionConfig& detection_config);
 
     ~DetectionWorker();
 

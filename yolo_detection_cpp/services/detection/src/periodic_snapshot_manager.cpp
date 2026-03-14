@@ -16,9 +16,9 @@ namespace hms {
 
 PeriodicSnapshotManager::PeriodicSnapshotManager(
     std::shared_ptr<BufferService> buffer_service,
-    std::shared_ptr<yolo::DbPool> db,
+    std::shared_ptr<hms::DbPool> db,
     std::shared_ptr<GpuCoordinator> gpu_coord,
-    const yolo::AppConfig& config)
+    const hms::AppConfig& config)
     : buffer_service_(std::move(buffer_service))
     , db_(std::move(db))
     , gpu_coord_(std::move(gpu_coord))
@@ -149,7 +149,7 @@ void PeriodicSnapshotManager::cameraLoop(const std::string& camera_id,
             // 6. Insert into DB (always — even without context, the snapshot is valuable)
             if (db_) {
                 std::string model_used = was_aborted ? "" : config_.periodic_vision.model;
-                yolo::api_queries::insert_periodic_snapshot(
+                hms::api_queries::insert_periodic_snapshot(
                     *db_, camera_id, snapshot_filename, thumbnail_filename,
                     context_text, embedding, model_used, is_valid);
             }

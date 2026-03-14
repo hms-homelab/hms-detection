@@ -83,7 +83,7 @@ private:
     int64_t pts_ = 0;
     bool recording_ = false;
     bool stop_requested_ = false;
-    Clock::time_point stop_requested_time_;
+    SteadyClock::time_point stop_requested_time_;
     int post_roll_seconds_ = 5;
 };
 

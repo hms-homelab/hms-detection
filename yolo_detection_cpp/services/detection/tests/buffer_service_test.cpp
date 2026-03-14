@@ -4,26 +4,26 @@
 using namespace hms;
 
 namespace {
-yolo::AppConfig makeTestConfig(bool enable_all = true) {
-    yolo::AppConfig config;
+hms::AppConfig makeTestConfig(bool enable_all = true) {
+    hms::AppConfig config;
     config.buffer.preroll_seconds = 5;
     config.buffer.fps = 15;
 
-    yolo::CameraConfig cam1;
+    hms::CameraConfig cam1;
     cam1.id = "test_cam1";
     cam1.name = "Test Camera 1";
     cam1.rtsp_url = "rtsp://localhost:8554/nonexistent1";
     cam1.enabled = enable_all;
     config.cameras["test_cam1"] = cam1;
 
-    yolo::CameraConfig cam2;
+    hms::CameraConfig cam2;
     cam2.id = "test_cam2";
     cam2.name = "Test Camera 2";
     cam2.rtsp_url = "rtsp://localhost:8554/nonexistent2";
     cam2.enabled = true;
     config.cameras["test_cam2"] = cam2;
 
-    yolo::CameraConfig cam3;
+    hms::CameraConfig cam3;
     cam3.id = "test_cam3";
     cam3.name = "Test Camera 3 (disabled)";
     cam3.rtsp_url = "rtsp://localhost:8554/nonexistent3";

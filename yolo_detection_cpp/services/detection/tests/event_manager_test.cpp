@@ -11,14 +11,14 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-yolo::AppConfig makeTestConfig() {
-    yolo::AppConfig config;
+hms::AppConfig makeTestConfig() {
+    hms::AppConfig config;
     config.buffer.preroll_seconds = 2;
     config.buffer.fps = 15;
     config.buffer.max_buffer_size_mb = 10;
 
     // Use non-routable RTSP URLs — cameras won't connect, but buffers are created
-    yolo::CameraConfig cam;
+    hms::CameraConfig cam;
     cam.id = "test_cam";
     cam.name = "Test Camera";
     cam.rtsp_url = "rtsp://127.0.0.1:1/nonexistent";
@@ -50,8 +50,8 @@ yolo::AppConfig makeTestConfig() {
     return config;
 }
 
-yolo::MqttConfig makeMqttConfig() {
-    yolo::MqttConfig cfg;
+hms::MqttConfig makeMqttConfig() {
+    hms::MqttConfig cfg;
     cfg.broker = "192.168.2.15";
     cfg.port = 1883;
     cfg.username = "aamat";
@@ -65,7 +65,7 @@ yolo::MqttConfig makeMqttConfig() {
 TEST_CASE("EventManager ignores duplicate motion_start for same camera", "[event_manager]") {
     auto config = makeTestConfig();
     auto buffer_service = std::make_shared<BufferService>(config);
-    auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
+    auto mqtt = std::make_shared<hms::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
     EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
@@ -103,7 +103,7 @@ TEST_CASE("EventManager allows events for different cameras", "[event_manager]")
     auto config = makeTestConfig();
 
     // Add a second camera
-    yolo::CameraConfig cam2;
+    hms::CameraConfig cam2;
     cam2.id = "test_cam2";
     cam2.name = "Test Camera 2";
     cam2.rtsp_url = "rtsp://127.0.0.1:1/nonexistent2";
@@ -111,7 +111,7 @@ TEST_CASE("EventManager allows events for different cameras", "[event_manager]")
     config.cameras["test_cam2"] = cam2;
 
     auto buffer_service = std::make_shared<BufferService>(config);
-    auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
+    auto mqtt = std::make_shared<hms::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
     EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
@@ -139,7 +139,7 @@ TEST_CASE("EventManager allows events for different cameras", "[event_manager]")
 TEST_CASE("EventManager cleanup allows re-use after event completes", "[event_manager]") {
     auto config = makeTestConfig();
     auto buffer_service = std::make_shared<BufferService>(config);
-    auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
+    auto mqtt = std::make_shared<hms::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
     EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);
@@ -177,8 +177,8 @@ TEST_CASE("EventManager cleanup allows re-use after event completes", "[event_ma
 // ============================================================================
 
 TEST_CASE("Confidence gate defaults to 0.70 when not set", "[event_manager][confidence_gate]") {
-    yolo::AppConfig config;
-    yolo::CameraConfig cam;
+    hms::AppConfig config;
+    hms::CameraConfig cam;
     cam.id = "test";
     cam.immediate_notification_confidence = 0;  // not explicitly set
     config.cameras["test"] = cam;
@@ -191,8 +191,8 @@ TEST_CASE("Confidence gate defaults to 0.70 when not set", "[event_manager][conf
 }
 
 TEST_CASE("Confidence gate uses camera-specific value when set", "[event_manager][confidence_gate]") {
-    yolo::AppConfig config;
-    yolo::CameraConfig cam;
+    hms::AppConfig config;
+    hms::CameraConfig cam;
     cam.id = "test";
     cam.immediate_notification_confidence = 0.85;
     config.cameras["test"] = cam;
@@ -390,7 +390,7 @@ TEST_CASE("Gate 1.00 blocks all real detections", "[event_manager][confidence_ga
 }
 
 TEST_CASE("Unknown camera falls back to default 0.70 gate", "[event_manager][confidence_gate]") {
-    yolo::AppConfig config;
+    hms::AppConfig config;
     // No cameras configured at all
 
     std::string camera_id = "unknown_cam";
@@ -402,14 +402,14 @@ TEST_CASE("Unknown camera falls back to default 0.70 gate", "[event_manager][con
 }
 
 TEST_CASE("Multiple cameras with different gates", "[event_manager][confidence_gate]") {
-    yolo::AppConfig config;
+    hms::AppConfig config;
 
-    yolo::CameraConfig patio;
+    hms::CameraConfig patio;
     patio.id = "patio";
     patio.immediate_notification_confidence = 0.60;
     config.cameras["patio"] = patio;
 
-    yolo::CameraConfig front;
+    hms::CameraConfig front;
     front.id = "front_door";
     front.immediate_notification_confidence = 0.80;
     config.cameras["front_door"] = front;
@@ -429,7 +429,7 @@ TEST_CASE("Multiple cameras with different gates", "[event_manager][confidence_g
 TEST_CASE("EventManager motion_stop ends active event", "[event_manager]") {
     auto config = makeTestConfig();
     auto buffer_service = std::make_shared<BufferService>(config);
-    auto mqtt = std::make_shared<yolo::MqttClient>(makeMqttConfig());
+    auto mqtt = std::make_shared<hms::MqttClient>(makeMqttConfig());
     REQUIRE(mqtt->connect());
 
     EventManager mgr(buffer_service, mqtt, nullptr, nullptr, config);

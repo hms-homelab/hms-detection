@@ -9,8 +9,8 @@ namespace hms {
 DetectionWorker::DetectionWorker(const std::string& camera_id,
                                  std::shared_ptr<CameraBuffer> buffer,
                                  std::shared_ptr<DetectionEngine> engine,
-                                 const yolo::CameraConfig& camera_config,
-                                 const yolo::DetectionConfig& detection_config)
+                                 const hms::CameraConfig& camera_config,
+                                 const hms::DetectionConfig& detection_config)
     : camera_id_(camera_id)
     , buffer_(std::move(buffer))
     , engine_(std::move(engine))

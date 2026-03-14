@@ -23,10 +23,10 @@ namespace hms {
 class EventManager {
 public:
     EventManager(std::shared_ptr<BufferService> buffer_service,
-                 std::shared_ptr<yolo::MqttClient> mqtt,
-                 std::shared_ptr<yolo::DbPool> db,
+                 std::shared_ptr<hms::MqttClient> mqtt,
+                 std::shared_ptr<hms::DbPool> db,
                  std::shared_ptr<GpuCoordinator> gpu_coord,
-                 const yolo::AppConfig& config);
+                 const hms::AppConfig& config);
     ~EventManager();
 
     EventManager(const EventManager&) = delete;
@@ -72,10 +72,10 @@ private:
     };
 
     std::shared_ptr<BufferService> buffer_service_;
-    std::shared_ptr<yolo::MqttClient> mqtt_;
-    std::shared_ptr<yolo::DbPool> db_;
+    std::shared_ptr<hms::MqttClient> mqtt_;
+    std::shared_ptr<hms::DbPool> db_;
     std::shared_ptr<GpuCoordinator> gpu_coord_;
-    yolo::AppConfig config_;
+    hms::AppConfig config_;
 
     mutable std::mutex events_mutex_;
     std::unordered_map<std::string, std::unique_ptr<ActiveEvent>> active_events_;

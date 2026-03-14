@@ -81,7 +81,7 @@ void DetectionController::detect(
 
         json response = {
             {"camera_id", camera_id},
-            {"timestamp", yolo::time_utils::now_iso8601()},
+            {"timestamp", hms::time_utils::now_iso8601()},
             {"frame_number", frame->frame_number},
             {"inference_ms", std::round(inference_ms * 10) / 10},
             {"detections", dets_json},
@@ -117,7 +117,7 @@ void DetectionController::detect(
 
     json response = {
         {"camera_id", camera_id},
-        {"timestamp", yolo::time_utils::now_iso8601()},
+        {"timestamp", hms::time_utils::now_iso8601()},
         {"frame_number", result->frame_number},
         {"inference_ms", std::round(inference_ms * 10) / 10},
         {"detections", dets_json},

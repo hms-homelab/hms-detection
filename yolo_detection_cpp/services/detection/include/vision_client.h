@@ -18,7 +18,7 @@ public:
         bool was_aborted = false;  // true if aborted by external signal
     };
 
-    explicit VisionClient(const yolo::LlavaConfig& config);
+    explicit VisionClient(const hms::LlavaConfig& config);
 
     /// Synchronous call — blocks until Ollama responds (up to timeout).
     /// Safe to call from event threads (outside Drogon event loop).
@@ -51,7 +51,7 @@ public:
 
 private:
 
-    yolo::LlavaConfig config_;
+    hms::LlavaConfig config_;
     std::string last_prompt_;
 };
 
