@@ -1,14 +1,16 @@
 #pragma once
 
 #include "config_manager.h"
+#include "llm_client.h"
 
 #include <atomic>
 #include <string>
 
 namespace hms {
 
-/// Synchronous Ollama LLaVA/moondream client for vision context generation.
-/// Uses libcurl internally — fully decoupled from Drogon's event loop.
+/// Vision analysis facade for detection events.
+/// Delegates HTTP/provider logic to hms::LLMClient (supports Ollama, OpenAI, Gemini, Anthropic).
+/// Handles detection-specific concerns: file I/O, prompt building, result validation.
 class VisionClient {
 public:
     struct Result {
@@ -20,7 +22,7 @@ public:
 
     explicit VisionClient(const hms::LlavaConfig& config);
 
-    /// Synchronous call — blocks until Ollama responds (up to timeout).
+    /// Synchronous call — blocks until LLM responds (up to timeout).
     /// Safe to call from event threads (outside Drogon event loop).
     /// If abort_flag is non-null and becomes true, the request is cancelled.
     Result analyze(const std::string& snapshot_path,
@@ -41,15 +43,15 @@ public:
     std::string buildPrompt(const std::string& camera_id,
                             const std::string& detected_class);
 
-    /// Base64-encode binary data (e.g. JPEG bytes)
-    static std::string base64Encode(const std::vector<unsigned char>& data);
-
     /// Force-unload a model from Ollama by sending keep_alive=0.
-    /// Quick call, no inference — just triggers eviction.
     static void forceUnloadModel(const std::string& ollama_endpoint,
-                                  const std::string& model_name);
+                                  const std::string& model_name) {
+        LLMClient::forceUnloadModel(ollama_endpoint, model_name);
+    }
 
 private:
+    /// Convert LlavaConfig to LLMConfig for the shared client
+    static LLMConfig makeLLMConfig(const LlavaConfig& lc);
 
     hms::LlavaConfig config_;
     std::string last_prompt_;

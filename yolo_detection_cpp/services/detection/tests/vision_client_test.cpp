@@ -85,31 +85,31 @@ TEST_CASE("VisionClient::selectPrimaryClass returns object for empty list", "[vi
 TEST_CASE("VisionClient::base64Encode roundtrip", "[vision]") {
     // Known test vector: "Hello" -> "SGVsbG8="
     std::vector<unsigned char> data = {'H', 'e', 'l', 'l', 'o'};
-    auto encoded = hms::VisionClient::base64Encode(data);
+    auto encoded = hms::LLMClient::base64Encode(data);
     CHECK(encoded == "SGVsbG8=");
 }
 
-TEST_CASE("VisionClient::base64Encode handles empty input", "[vision]") {
+TEST_CASE("LLMClient::base64Encode handles empty input", "[vision]") {
     std::vector<unsigned char> data;
-    auto encoded = hms::VisionClient::base64Encode(data);
+    auto encoded = hms::LLMClient::base64Encode(data);
     CHECK(encoded.empty());
 }
 
-TEST_CASE("VisionClient::base64Encode handles single byte", "[vision]") {
+TEST_CASE("LLMClient::base64Encode handles single byte", "[vision]") {
     std::vector<unsigned char> data = {'A'};  // 'A' = 0x41 -> "QQ=="
-    auto encoded = hms::VisionClient::base64Encode(data);
+    auto encoded = hms::LLMClient::base64Encode(data);
     CHECK(encoded == "QQ==");
 }
 
-TEST_CASE("VisionClient::base64Encode handles two bytes", "[vision]") {
+TEST_CASE("LLMClient::base64Encode handles two bytes", "[vision]") {
     std::vector<unsigned char> data = {'A', 'B'};  // -> "QUI="
-    auto encoded = hms::VisionClient::base64Encode(data);
+    auto encoded = hms::LLMClient::base64Encode(data);
     CHECK(encoded == "QUI=");
 }
 
-TEST_CASE("VisionClient::base64Encode handles three bytes (no padding)", "[vision]") {
+TEST_CASE("LLMClient::base64Encode handles three bytes (no padding)", "[vision]") {
     std::vector<unsigned char> data = {'A', 'B', 'C'};  // -> "QUJD"
-    auto encoded = hms::VisionClient::base64Encode(data);
+    auto encoded = hms::LLMClient::base64Encode(data);
     CHECK(encoded == "QUJD");
 }
 

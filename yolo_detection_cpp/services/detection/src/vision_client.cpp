@@ -1,13 +1,9 @@
 #include "vision_client.h"
 
 #include <spdlog/spdlog.h>
-#include <nlohmann/json.hpp>
-#include <curl/curl.h>
 
 #include <chrono>
 #include <fstream>
-
-using json = nlohmann::json;
 
 namespace hms {
 
@@ -16,21 +12,19 @@ VisionClient::VisionClient(const hms::LlavaConfig& config)
 {
 }
 
-// libcurl write callback
-static size_t curlWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* response = static_cast<std::string*>(userdata);
-    response->append(ptr, size * nmemb);
-    return size * nmemb;
-}
-
-// libcurl progress callback — used to abort requests when abort_flag is set
-static int curlProgressCallback(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
-                                 curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
-    auto* abort_flag = static_cast<const std::atomic<bool>*>(clientp);
-    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
-        return 1;  // Non-zero return aborts the transfer
-    }
-    return 0;
+LLMConfig VisionClient::makeLLMConfig(const LlavaConfig& lc) {
+    LLMConfig c;
+    c.enabled = lc.enabled;
+    c.provider = LLMClient::parseProvider(lc.provider);
+    c.endpoint = lc.endpoint;
+    c.model = lc.model;
+    c.api_key = lc.api_key;
+    c.temperature = lc.temperature;
+    c.max_tokens = lc.max_tokens;
+    c.timeout_seconds = lc.timeout_seconds;
+    c.connect_timeout_seconds = 10;
+    c.keep_alive_seconds = 0;  // always unload after vision call
+    return c;
 }
 
 VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
@@ -38,7 +32,6 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
                                            const std::string& detected_class,
                                            const std::atomic<bool>* abort_flag) {
     Result result;
-    auto t0 = std::chrono::steady_clock::now();
 
     // Check abort before doing any work
     if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
@@ -73,152 +66,53 @@ VisionClient::Result VisionClient::analyze(const std::string& snapshot_path,
     // 2. Build prompt
     last_prompt_ = buildPrompt(camera_id, detected_class);
 
-    // 3. Build Ollama request body
-    //    keep_alive=0 tells Ollama to unload the model from GPU immediately after inference
-    json body = {
-        {"model", config_.model},
-        {"prompt", last_prompt_},
-        {"images", {base64Encode(image_data)}},
-        {"stream", false},
-        {"keep_alive", 0}
-    };
-    std::string body_str = body.dump();
+    // 3. Delegate to LLMClient for the actual API call
+    LLMClient client(makeLLMConfig(config_));
+    LLMImage img{LLMClient::base64Encode(image_data), "image/jpeg"};
+    auto response = client.generateVision(last_prompt_, {img}, abort_flag);
 
-    // 4. Send HTTP POST to Ollama using libcurl (decoupled from Drogon event loop)
-    std::string url = config_.endpoint + "/api/generate";
-    std::string response_body;
+    result.response_time_seconds = response.elapsed_seconds;
+    result.was_aborted = response.was_aborted;
 
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        spdlog::error("VisionClient: curl_easy_init failed");
-        return result;
-    }
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_str.size()));
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(config_.timeout_seconds));
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);  // Thread-safe
-
-    // Set up abort via progress callback if abort_flag provided
-    if (abort_flag) {
-        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, curlProgressCallback);
-        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, abort_flag);
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);  // Enable progress callback
-    }
-
-    CURLcode res = curl_easy_perform(curl);
-
-    auto elapsed = std::chrono::steady_clock::now() - t0;
-    result.response_time_seconds = std::chrono::duration<double>(elapsed).count();
-
-    if (res == CURLE_ABORTED_BY_CALLBACK) {
-        result.was_aborted = true;
+    if (response.was_aborted) {
         spdlog::info("VisionClient: request aborted for {} after {:.1f}s",
                       camera_id, result.response_time_seconds);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
         return result;
     }
 
-    if (res != CURLE_OK) {
-        spdlog::error("VisionClient: curl error for {}: {} ({:.1f}s)",
-                      camera_id, curl_easy_strerror(res), result.response_time_seconds);
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
+    if (!response.text) {
+        spdlog::error("VisionClient: no response from {} for {} ({:.1f}s)",
+                      config_.model, camera_id, result.response_time_seconds);
         return result;
     }
 
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    // 4. Validate response
+    result.context = response.text.value();
 
-    if (http_code != 200) {
-        spdlog::error("VisionClient: Ollama returned HTTP {}", http_code);
-        return result;
+    // Trim whitespace
+    auto ltrim = result.context.find_first_not_of(" \t\n\r");
+    if (ltrim != std::string::npos) {
+        result.context = result.context.substr(ltrim);
+    }
+    auto rtrim = result.context.find_last_not_of(" \t\n\r");
+    if (rtrim != std::string::npos) {
+        result.context = result.context.substr(0, rtrim + 1);
     }
 
-    // 5. Parse response
-    try {
-        auto j = json::parse(response_body);
-        result.context = j.value("response", "");
+    // Validate: >= 15 chars and contains at least one space
+    result.is_valid = result.context.size() >= 15 &&
+                      result.context.find(' ') != std::string::npos;
 
-        // Trim whitespace
-        auto ltrim = result.context.find_first_not_of(" \t\n\r");
-        if (ltrim != std::string::npos) {
-            result.context = result.context.substr(ltrim);
-        }
-        auto rtrim = result.context.find_last_not_of(" \t\n\r");
-        if (rtrim != std::string::npos) {
-            result.context = result.context.substr(0, rtrim + 1);
-        }
-
-        // Validate: >= 15 chars and contains at least one space
-        result.is_valid = result.context.size() >= 15 &&
-                          result.context.find(' ') != std::string::npos;
-
-        if (!result.is_valid) {
-            spdlog::warn("VisionClient: invalid response (len={}, text='{}')",
-                         result.context.size(), result.context);
-        }
-    } catch (const json::exception& e) {
-        spdlog::error("VisionClient: failed to parse Ollama response: {}",
-                      e.what());
+    if (!result.is_valid) {
+        spdlog::warn("VisionClient: invalid response (len={}, text='{}')",
+                     result.context.size(), result.context);
     }
 
-    spdlog::info("VisionClient: {} analysis for {} in {:.1f}s valid={} text='{}'",
-                 config_.model, camera_id, result.response_time_seconds,
-                 result.is_valid, result.context);
+    spdlog::info("VisionClient: {} ({}) analysis for {} in {:.1f}s valid={} text='{}'",
+                 config_.model, config_.provider, camera_id,
+                 result.response_time_seconds, result.is_valid, result.context);
 
     return result;
-}
-
-void VisionClient::forceUnloadModel(const std::string& ollama_endpoint,
-                                     const std::string& model_name) {
-    json body = {
-        {"model", model_name},
-        {"keep_alive", 0}
-    };
-    std::string body_str = body.dump();
-    std::string url = ollama_endpoint + "/api/generate";
-    std::string response_body;
-
-    CURL* curl = curl_easy_init();
-    if (!curl) return;
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_str.size()));
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-
-    auto res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    if (res == CURLE_OK) {
-        spdlog::info("VisionClient: force-unloaded {} from Ollama", model_name);
-    } else {
-        spdlog::warn("VisionClient: failed to force-unload {}: {}",
-                      model_name, curl_easy_strerror(res));
-    }
 }
 
 std::string VisionClient::buildPrompt(const std::string& camera_id,
@@ -237,27 +131,14 @@ std::string VisionClient::buildPrompt(const std::string& camera_id,
         }
     }
 
-    // Replace {max_words} and {class} placeholders
-    std::string prompt = tmpl;
-    std::string max_words_str = std::to_string(config_.max_words);
-
-    for (std::string::size_type pos = 0;
-         (pos = prompt.find("{max_words}", pos)) != std::string::npos; ) {
-        prompt.replace(pos, 11, max_words_str);
-        pos += max_words_str.size();
-    }
-    for (std::string::size_type pos = 0;
-         (pos = prompt.find("{class}", pos)) != std::string::npos; ) {
-        prompt.replace(pos, 7, detected_class);
-        pos += detected_class.size();
-    }
-
-    return prompt;
+    return LLMClient::substituteTemplate(tmpl, {
+        {"max_words", std::to_string(config_.max_words)},
+        {"class", detected_class}
+    });
 }
 
 std::string VisionClient::selectPrimaryClass(
         const std::vector<std::string>& classes) {
-    // Priority: person > dog > cat > package > car
     static const std::vector<std::string> priority = {
         "person", "dog", "cat", "package", "car"
     };
@@ -269,42 +150,6 @@ std::string VisionClient::selectPrimaryClass(
     }
 
     return classes.empty() ? "object" : classes.front();
-}
-
-std::string VisionClient::base64Encode(const std::vector<unsigned char>& data) {
-    static constexpr char table[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    std::string encoded;
-    encoded.reserve(((data.size() + 2) / 3) * 4);
-
-    size_t i = 0;
-    for (; i + 2 < data.size(); i += 3) {
-        uint32_t n = (static_cast<uint32_t>(data[i]) << 16) |
-                     (static_cast<uint32_t>(data[i + 1]) << 8) |
-                      static_cast<uint32_t>(data[i + 2]);
-        encoded += table[(n >> 18) & 0x3F];
-        encoded += table[(n >> 12) & 0x3F];
-        encoded += table[(n >> 6)  & 0x3F];
-        encoded += table[n & 0x3F];
-    }
-
-    if (i + 1 == data.size()) {
-        uint32_t n = static_cast<uint32_t>(data[i]) << 16;
-        encoded += table[(n >> 18) & 0x3F];
-        encoded += table[(n >> 12) & 0x3F];
-        encoded += '=';
-        encoded += '=';
-    } else if (i + 2 == data.size()) {
-        uint32_t n = (static_cast<uint32_t>(data[i]) << 16) |
-                     (static_cast<uint32_t>(data[i + 1]) << 8);
-        encoded += table[(n >> 18) & 0x3F];
-        encoded += table[(n >> 12) & 0x3F];
-        encoded += table[(n >> 6)  & 0x3F];
-        encoded += '=';
-    }
-
-    return encoded;
 }
 
 }  // namespace hms

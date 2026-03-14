@@ -38,7 +38,7 @@ include(FetchContent)
 FetchContent_Declare(
     hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
-    GIT_TAG        v1.5.1
+    GIT_TAG        v1.6.0
 )
 set(HMS_SHARED_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(hms_shared)
