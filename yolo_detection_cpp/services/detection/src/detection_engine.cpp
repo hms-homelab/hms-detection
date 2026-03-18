@@ -417,18 +417,31 @@ std::vector<Detection> DetectionEngine::detect(const FrameData& frame,
     const float* output_data = output_tensor.GetTensorMutableData<float>();
 
     // Detect output format:
-    //   YOLO11: [1, 84, 8400]  — raw candidates, needs NMS
-    //   YOLO26: [1, 300, 6]    — end-to-end, already post-NMS [x1,y1,x2,y2,conf,class_id]
-    if (output_shape.size() == 3 && output_shape[2] == 6) {
-        // End-to-end format [1, N, 6]
+    //   YOLOv8/v9/v11 raw:  [1, 4+num_classes, num_candidates] e.g. [1, 84, 8400]
+    //   YOLO26 end-to-end:  [1, max_detections, 6]  e.g. [1, 300, 6]
+    //   Also handles older models exported with nms=True (same [1, N, 6] layout)
+    bool is_e2e = output_shape.size() == 3 && output_shape[2] == 6;
+
+    if (is_e2e) {
         int num_detections = static_cast<int>(output_shape[1]);
+        if (!e2e_logged_) {
+            spdlog::info("Model output: end-to-end [1, {}, 6] — using postprocessE2E (no manual NMS)", num_detections);
+            e2e_logged_ = true;
+        }
         if (num_detections == 0) return {};
         return postprocessE2E(output_data, num_detections,
                               conf_threshold, scale, pad_x, pad_y,
                               frame.width, frame.height, filter_classes);
     }
 
-    // Legacy raw format [1, num_values, num_candidates]
+    if (!raw_logged_) {
+        spdlog::info("Model output: raw [1, {}, {}] — using postprocess with manual NMS",
+                     output_shape.size() >= 2 ? output_shape[1] : 0,
+                     output_shape.size() >= 3 ? output_shape[2] : 0);
+        raw_logged_ = true;
+    }
+
+    // Raw format [1, num_values, num_candidates] — YOLOv8, v9, v11
     int num_candidates = 0;
     if (output_shape.size() == 3) {
         num_candidates = static_cast<int>(output_shape[2]);

@@ -82,6 +82,10 @@ private:
     std::vector<std::string> output_names_str_;
     std::vector<const char*> input_names_;
     std::vector<const char*> output_names_;
+
+    // Log output format once on first detection
+    mutable bool e2e_logged_ = false;
+    mutable bool raw_logged_ = false;
 };
 
 }  // namespace hms
