@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.14.0 (2026-03-17)
+
+### Added
+- **YOLO26 end-to-end output support**: Auto-detects ONNX output format at runtime — `[1, N, 6]` (YOLO26 e2e, pre-NMS'd) vs `[1, 84, 8400]` (YOLO11 raw candidates). New `postprocessE2E()` consumes YOLO26's built-in NMS output directly, skipping the manual per-class NMS pass.
+- Backward compatible — both YOLO11 and YOLO26 `.onnx` models work without config changes, just swap the file.
+
+### Changed
+- **Upgraded default model to YOLO26m**: +1.6 mAP over YOLO11m on COCO (53.1 vs 51.5) with identical GPU inference time and VRAM footprint. Better small-object detection via STAL (Small-Target-Aware Label Assignment).
+
 ## v2.10.0 (2026-03-11)
 
 ### Added
