@@ -11,7 +11,7 @@ Real-time YOLO object detection, event recording, and AI vision context for secu
 - **RTSP capture** via FFmpeg libav* with per-camera decode threads
 - **Pre-allocated frame pool** with zero-copy recycling (no malloc churn)
 - **Ring buffer** per camera with lock-free concurrent reads
-- **YOLO inference** via ONNX Runtime with configurable classes and confidence thresholds
+- **YOLO inference** via ONNX Runtime — supports YOLOv8, YOLOv9, YOLO11, and YOLO26 (Ultralytics)
 - **Event recording** with pre-roll/post-roll (FFmpeg muxer from ring buffer)
 - **Snapshot capture** of highest-confidence detection frame with bounding boxes
 - **MQTT integration** for Home Assistant motion events and detection results
@@ -132,6 +132,29 @@ ctest --test-dir build --output-on-failure
 # Run
 ./build/services/detection/hms_detection --config config.yaml
 ```
+
+## Supported YOLO Models
+
+Any [Ultralytics](https://docs.ultralytics.com/) YOLO model exported to ONNX. The output format is auto-detected at runtime:
+
+| Model | Output Format | Notes |
+|-------|--------------|-------|
+| **YOLOv8** (all sizes) | `[1, 84, 8400]` raw | Manual NMS applied |
+| **YOLOv9** (all sizes) | `[1, 84, 8400]` raw | Manual NMS applied |
+| **YOLO11** (all sizes) | `[1, 84, 8400]` raw | Manual NMS applied |
+| **YOLO26** (all sizes) | `[1, 300, 6]` e2e | Built-in NMS, no post-processing needed |
+
+Export your model:
+
+```bash
+yolo export model=yolo26m.pt format=onnx imgsz=640
+# or for older versions:
+yolo export model=yolov8m.pt format=onnx imgsz=640
+```
+
+Then set `model_path` in `config.yaml` to the exported `.onnx` file.
+
+> **Note**: Custom-trained models with non-COCO class counts are supported — set `num_classes` in the detection config to match your model.
 
 ## Configuration
 

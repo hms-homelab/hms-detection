@@ -416,11 +416,23 @@ std::vector<Detection> DetectionEngine::detect(const FrameData& frame,
     auto output_shape = output_tensor.GetTensorTypeAndShapeInfo().GetShape();
     const float* output_data = output_tensor.GetTensorMutableData<float>();
 
+    // Validate output tensor shape — must be 3D: [1, ?, ?]
+    if (output_shape.size() != 3 || output_shape[0] != 1) {
+        if (!format_error_logged_) {
+            spdlog::error("Unsupported ONNX output shape: [{}]. "
+                          "Expected [1, C, N] (YOLOv8/v9/v11) or [1, N, 6] (YOLO26). "
+                          "Supported models: YOLOv8, YOLOv9, YOLO11, YOLO26 (Ultralytics). "
+                          "Export with: yolo export model=<model>.pt format=onnx imgsz=640",
+                          fmt::join(output_shape, ", "));
+            format_error_logged_ = true;
+        }
+        return {};
+    }
+
     // Detect output format:
     //   YOLOv8/v9/v11 raw:  [1, 4+num_classes, num_candidates] e.g. [1, 84, 8400]
     //   YOLO26 end-to-end:  [1, max_detections, 6]  e.g. [1, 300, 6]
-    //   Also handles older models exported with nms=True (same [1, N, 6] layout)
-    bool is_e2e = output_shape.size() == 3 && output_shape[2] == 6;
+    bool is_e2e = output_shape[2] == 6;
 
     if (is_e2e) {
         int num_detections = static_cast<int>(output_shape[1]);
@@ -434,20 +446,28 @@ std::vector<Detection> DetectionEngine::detect(const FrameData& frame,
                               frame.width, frame.height, filter_classes);
     }
 
+    // Validate raw format: dim1 should be 4+num_classes
+    int expected_values = 4 + num_classes_;
+    if (output_shape[1] != expected_values) {
+        if (!format_error_logged_) {
+            spdlog::error("Unexpected ONNX output shape [1, {}, {}]. "
+                          "Expected dim1={} (4 + {} classes) for raw YOLO output. "
+                          "Supported models: YOLOv8, YOLOv9, YOLO11, YOLO26 (Ultralytics). "
+                          "If using a custom-trained model, set num_classes in config.",
+                          output_shape[1], output_shape[2], expected_values, num_classes_);
+            format_error_logged_ = true;
+        }
+        return {};
+    }
+
     if (!raw_logged_) {
         spdlog::info("Model output: raw [1, {}, {}] — using postprocess with manual NMS",
-                     output_shape.size() >= 2 ? output_shape[1] : 0,
-                     output_shape.size() >= 3 ? output_shape[2] : 0);
+                     output_shape[1], output_shape[2]);
         raw_logged_ = true;
     }
 
     // Raw format [1, num_values, num_candidates] — YOLOv8, v9, v11
-    int num_candidates = 0;
-    if (output_shape.size() == 3) {
-        num_candidates = static_cast<int>(output_shape[2]);
-    } else if (output_shape.size() == 2) {
-        num_candidates = static_cast<int>(output_shape[1]);
-    }
+    int num_candidates = static_cast<int>(output_shape[2]);
 
     if (num_candidates == 0) return {};
 

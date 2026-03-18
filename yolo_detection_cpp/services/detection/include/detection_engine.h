@@ -86,6 +86,7 @@ private:
     // Log output format once on first detection
     mutable bool e2e_logged_ = false;
     mutable bool raw_logged_ = false;
+    mutable bool format_error_logged_ = false;
 };
 
 }  // namespace hms
