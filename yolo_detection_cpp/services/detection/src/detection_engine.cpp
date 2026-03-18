@@ -276,6 +276,62 @@ std::vector<Detection> DetectionEngine::postprocess(const float* output, int num
     return result;
 }
 
+std::vector<Detection> DetectionEngine::postprocessE2E(const float* output, int num_detections,
+                                                       float conf_threshold,
+                                                       float scale, float pad_x, float pad_y,
+                                                       int orig_width, int orig_height,
+                                                       const std::vector<std::string>& filter_classes) const {
+    // Output is [1, N, 6] where each row is [x1, y1, x2, y2, confidence, class_id]
+    // Already post-NMS — no need for our own NMS pass
+
+    std::unordered_set<std::string> filter_set(filter_classes.begin(), filter_classes.end());
+    bool has_filter = !filter_set.empty();
+
+    std::vector<Detection> result;
+
+    for (int i = 0; i < num_detections; ++i) {
+        const float* row = output + i * 6;
+        float x1   = row[0];
+        float y1   = row[1];
+        float x2   = row[2];
+        float y2   = row[3];
+        float conf = row[4];
+        int cls_id = static_cast<int>(row[5]);
+
+        if (conf < conf_threshold) continue;
+
+        // Class filter
+        std::string cls_name = (cls_id >= 0 && cls_id < static_cast<int>(class_names_.size()))
+                               ? class_names_[cls_id] : "unknown";
+        if (has_filter && filter_set.find(cls_name) == filter_set.end()) continue;
+
+        // Reverse letterbox: subtract padding, divide by scale
+        x1 = (x1 - pad_x) / scale;
+        y1 = (y1 - pad_y) / scale;
+        x2 = (x2 - pad_x) / scale;
+        y2 = (y2 - pad_y) / scale;
+
+        // Clamp to image bounds
+        x1 = std::max(0.0f, std::min(x1, static_cast<float>(orig_width)));
+        y1 = std::max(0.0f, std::min(y1, static_cast<float>(orig_height)));
+        x2 = std::max(0.0f, std::min(x2, static_cast<float>(orig_width)));
+        y2 = std::max(0.0f, std::min(y2, static_cast<float>(orig_height)));
+
+        // Skip degenerate boxes
+        if (x2 - x1 < 1.0f || y2 - y1 < 1.0f) continue;
+
+        result.push_back({cls_name, cls_id, conf, x1, y1, x2, y2});
+    }
+
+    // Sort by confidence descending
+    std::sort(result.begin(), result.end(),
+              [](const Detection& a, const Detection& b) {
+                  return a.confidence > b.confidence;
+              });
+
+    return result;
+}
+
 float DetectionEngine::iou(const Detection& a, const Detection& b) {
     float inter_x1 = std::max(a.x1, b.x1);
     float inter_y1 = std::max(a.y1, b.y1);
@@ -360,7 +416,19 @@ std::vector<Detection> DetectionEngine::detect(const FrameData& frame,
     auto output_shape = output_tensor.GetTensorTypeAndShapeInfo().GetShape();
     const float* output_data = output_tensor.GetTensorMutableData<float>();
 
-    // Output shape: [1, 84, 8400] → num_candidates = last dim
+    // Detect output format:
+    //   YOLO11: [1, 84, 8400]  — raw candidates, needs NMS
+    //   YOLO26: [1, 300, 6]    — end-to-end, already post-NMS [x1,y1,x2,y2,conf,class_id]
+    if (output_shape.size() == 3 && output_shape[2] == 6) {
+        // End-to-end format [1, N, 6]
+        int num_detections = static_cast<int>(output_shape[1]);
+        if (num_detections == 0) return {};
+        return postprocessE2E(output_data, num_detections,
+                              conf_threshold, scale, pad_x, pad_y,
+                              frame.width, frame.height, filter_classes);
+    }
+
+    // Legacy raw format [1, num_values, num_candidates]
     int num_candidates = 0;
     if (output_shape.size() == 3) {
         num_candidates = static_cast<int>(output_shape[2]);

@@ -50,6 +50,13 @@ public:
                                        int orig_width, int orig_height,
                                        const std::vector<std::string>& filter_classes) const;
 
+    /// Post-process end-to-end model output [1, N, 6] where each row is [x1, y1, x2, y2, conf, class_id]
+    std::vector<Detection> postprocessE2E(const float* output, int num_detections,
+                                          float conf_threshold,
+                                          float scale, float pad_x, float pad_y,
+                                          int orig_width, int orig_height,
+                                          const std::vector<std::string>& filter_classes) const;
+
     static std::vector<int> nms(const std::vector<Detection>& dets, float iou_threshold);
     static float iou(const Detection& a, const Detection& b);
 
