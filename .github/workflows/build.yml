@@ -56,3 +56,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Make GHCR package public
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PUT \
+            orgs/${{ github.repository_owner }}/packages/container/hms-detection \
+            -f visibility=public || echo "Could not set visibility (may need org admin token)"
