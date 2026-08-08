@@ -3,6 +3,7 @@ name: Build and push hms-detection
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 env:
@@ -13,7 +14,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # needed to create GitHub Releases on tag builds
       packages: write
 
     steps:
@@ -42,6 +43,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
+            type=ref,event=tag
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -65,3 +67,35 @@ jobs:
           gh api --method PUT \
             orgs/${{ github.repository_owner }}/packages/container/hms-detection \
             -f visibility=public || echo "Could not set visibility (may need org admin token)"
+
+      # ── Tag builds: extract the compiled binary from the image and publish it ──
+      # The binary is a Debian-trixie CPU build (apt libonnxruntime) — a portable
+      # convenience artifact, NOT the GPU build. The supported production path is a
+      # local GPU build (cmake --preset gpu). See release notes below.
+      - name: Extract binary from image
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          docker pull "$IMG"
+          CID=$(docker create "$IMG")
+          docker cp "$CID:/usr/local/bin/hms_detection" ./hms_detection
+          docker rm "$CID"
+          chmod +x ./hms_detection
+          sha256sum ./hms_detection | tee hms_detection.sha256
+          tar -czf hms-detection-linux-amd64.tar.gz hms_detection hms_detection.sha256
+          ls -lh hms-detection-linux-amd64.tar.gz
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hms-detection-linux-amd64.tar.gz
+          generate_release_notes: true
+          body: |
+            Automated release built from the Docker image for this tag.
+
+            **`hms-detection-linux-amd64.tar.gz`** contains the `hms_detection`
+            binary (Debian trixie, **CPU** ONNX Runtime) plus its sha256. This is a
+            portable convenience artifact — the supported production path on the NVR
+            is a local **GPU** build (`cmake --preset gpu`), which links the CUDA
+            ONNX Runtime from `/opt/onnxruntime-gpu`.
